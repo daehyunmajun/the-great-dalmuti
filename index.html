@@ -17,7 +17,7 @@ body { font-family: Arial; padding: 20px; }
   font-size: 20px;
 }
 .selected { background: #ffc107; font-weight: bold; }
-#playersInfo, #playerList { margin-top: 15px; }
+#playerList { margin-top: 15px; }
 button { margin-top: 5px; margin-right: 5px; }
 </style>
 </head>
@@ -55,6 +55,7 @@ fullDeck.push(0,0); // 광대 2장
 
 // ===== P2P 설정 =====
 let peer=null, conn=null, isHost=false, playerId=null, roomId=null;
+let gameStarted=false;
 
 // 게임 상태
 let gameState = {roundNumber:null, roundCount:null, turnOrder:[], currentTurn:0, players:{}};
@@ -129,7 +130,7 @@ function playSelected(){
   gameState.roundCount=cards.length;
   updateTableArea(`${gameState.players[playerId].name}: ${cards.length}장 (${number===0?"광대 포함":number})`);
 
-  if(isHost) {
+  if(isHost){
     nextTurn();
     broadcastGameState();
   }
@@ -168,10 +169,12 @@ document.getElementById("joinBtn").onclick=()=>{
   roomId=document.getElementById("roomId").value;
   if(!roomId) return alert("방 ID 필요");
   peer=new Peer(playerId);
-  peer.on('open',id=>{
+  peer.on('open',()=>{
     conn=peer.connect(roomId);
-    conn.on('open',()=>{conn.send({type:"join",name:name,id:playerId});});
-    conn.on('data',handleData);
+    conn.on('open', ()=>{
+      conn.on('data', handleData);
+      conn.send({type:"join", name:name, id:playerId});
+    });
   });
 };
 
@@ -180,8 +183,16 @@ function setupHost(){
   const name=document.getElementById("playerName").value||"Host";
   gameState.players[playerId]={name:name,hand:[],pass:false};
   gameState.turnOrder.push(playerId);
-  peer.on('connection',c=>{c.on('data',d=>handleDataFromPlayer(d,c));});
-  distributeCards();
+
+  peer.on('connection', c=>{
+    c.on('data', d=>handleDataFromPlayer(d,c));
+  });
+
+  if(!gameStarted){
+    distributeCards();
+    gameStarted=true;
+  }
+
   updatePlayerList();
   updateTurnInfo();
   renderPlayerCards();
@@ -201,8 +212,16 @@ function distributeCards(){
 
 // ===== 데이터 처리 =====
 function handleData(d){
-  if(d.type==="gameState") gameState=d.state;
-  renderPlayerCards();
+  if(d.type==="gameState"){
+    // 참가자에게는 자기 카드만 보여주기
+    const pidSelf=playerId;
+    const remoteState=d.state;
+    for(const pid in remoteState.players){
+      if(pid!==pidSelf) remoteState.players[pid].hand=[]; // 다른 사람 카드 숨김
+    }
+    gameState=remoteState;
+    renderPlayerCards();
+  }
 }
 
 function handleDataFromPlayer(d,conn){
@@ -210,8 +229,8 @@ function handleDataFromPlayer(d,conn){
     const pid=d.id;
     gameState.players[pid]={name:d.name,hand:[],pass:false};
     gameState.turnOrder.push(pid);
-    if(isHost){
-      distributeCards(); // 게임 시작 전만 섞기
+    if(isHost && !gameStarted){
+      distributeCards(); // 게임 시작 전만 카드 분배
       broadcastGameState();
     }
     updatePlayerList();
