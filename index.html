@@ -156,6 +156,9 @@ document.getElementById("hostBtn").onclick=()=>{
   playerId="P"+Math.floor(Math.random()*10000);
   isHost=true;
   peer=new Peer(playerId);
+  peer.on('connection', c=>{
+    c.on('data', d=>handleDataFromPlayer(d,c));
+  });
   peer.on('open', id=>{
     roomId=id;
     alert(`방장 생성 완료, 방 ID: ${roomId}`);
@@ -170,7 +173,7 @@ document.getElementById("joinBtn").onclick=()=>{
   if(!roomId) return alert("방 ID 필요");
   peer=new Peer(playerId);
   peer.on('open',()=>{
-    conn=peer.connect(roomId);
+    conn = peer.connect(roomId);
     conn.on('open', ()=>{
       conn.on('data', handleData);
       conn.send({type:"join", name:name, id:playerId});
@@ -183,10 +186,6 @@ function setupHost(){
   const name=document.getElementById("playerName").value||"Host";
   gameState.players[playerId]={name:name,hand:[],pass:false};
   gameState.turnOrder.push(playerId);
-
-  peer.on('connection', c=>{
-    c.on('data', d=>handleDataFromPlayer(d,c));
-  });
 
   if(!gameStarted){
     distributeCards();
@@ -213,7 +212,6 @@ function distributeCards(){
 // ===== 데이터 처리 =====
 function handleData(d){
   if(d.type==="gameState"){
-    // 참가자에게는 자기 카드만 보여주기
     const pidSelf=playerId;
     const remoteState=d.state;
     for(const pid in remoteState.players){
