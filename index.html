@@ -18,6 +18,7 @@ body { font-family: Arial; padding: 20px; }
 }
 .selected { background: #ffc107; font-weight: bold; }
 #playersInfo, #playerList { margin-top: 15px; }
+button { margin-top: 5px; margin-right: 5px; }
 </style>
 </head>
 <body>
@@ -76,6 +77,7 @@ function renderPlayerCards(){
 }
 
 function toggleCard(idx){
+  if(!isMyTurn()) return alert("지금은 당신 차례가 아닙니다!");
   if(selectedCards.includes(idx)) selectedCards=selectedCards.filter(i=>i!==idx);
   else selectedCards.push(idx);
   renderPlayerCards();
@@ -100,8 +102,14 @@ function updateTableArea(msg){
   document.getElementById("tableArea").innerText=msg;
 }
 
+// ===== 내 차례 확인 =====
+function isMyTurn(){
+  return gameState.turnOrder[gameState.currentTurn] === playerId;
+}
+
 // ===== 카드 내기 =====
 function playSelected(){
+  if(!isMyTurn()) return alert("지금은 당신 차례가 아닙니다!");
   if(!selectedCards.length) return alert("카드를 선택하세요");
   const hand = gameState.players[playerId].hand;
   let cards = selectedCards.map(i=>hand[i]);
@@ -128,10 +136,12 @@ function playSelected(){
 }
 
 function playerPass(){
+  if(!isMyTurn()) return alert("지금은 당신 차례가 아닙니다!");
   updateTableArea(`${gameState.players[playerId].name} 패스`);
   nextTurn();
 }
 
+// ===== 턴 넘기기 =====
 function nextTurn(){
   gameState.currentTurn=(gameState.currentTurn+1)%gameState.turnOrder.length;
   updateTurnInfo();
@@ -139,7 +149,7 @@ function nextTurn(){
   if(isHost) broadcastGameState();
 }
 
-// ===== Host/Join =====
+// ===== Host/Join 버튼 =====
 document.getElementById("hostBtn").onclick=()=>{
   playerId="P"+Math.floor(Math.random()*10000);
   isHost=true;
@@ -206,6 +216,7 @@ function handleDataFromPlayer(d,conn){
   }
 }
 
+// ===== 상태 브로드캐스트 =====
 function broadcastGameState(){
   for(const c in peer.connections){
     for(const con of peer.connections[c]){
