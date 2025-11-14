@@ -75,6 +75,7 @@ function renderPlayerCards(){
     area.appendChild(div);
   });
   updatePlayerList();
+  updateTurnInfo();
 }
 
 function toggleCard(idx){
@@ -131,23 +132,22 @@ function playSelected(){
   updateTurnInfo();
   updateTableArea(`${gameState.players[playerId].name}: ${cards.length}장 (${number===0?"광대 포함":number})`);
 
-  if(isHost) broadcastGameState();
   nextTurn();
   renderPlayerCards();
+  if(isHost) broadcastGameState();
 }
 
 function playerPass(){
   if(!isMyTurn()) return alert("지금은 당신 차례가 아닙니다!");
   updateTableArea(`${gameState.players[playerId].name} 패스`);
   nextTurn();
+  if(isHost) broadcastGameState();
 }
 
 // ===== 턴 넘기기 =====
 function nextTurn(){
   gameState.currentTurn=(gameState.currentTurn+1)%gameState.turnOrder.length;
   updateTurnInfo();
-  renderPlayerCards();
-  if(isHost) broadcastGameState();
 }
 
 // ===== Host/Join 버튼 =====
