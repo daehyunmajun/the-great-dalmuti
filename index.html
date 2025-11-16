@@ -92,24 +92,24 @@
 
 <!-- Firebase libs (modular) -->
 <script type="module">
-/* ====== 설정할 것 (너의 Firebase 프로젝트 config) ======
-   반드시 본인 Firebase 콘솔에서 Realtime DB URL 과 API 키 등으로 교체하세요.
-*/
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import {
-  getDatabase, ref, set, push, onValue, update, get, child, remove
-} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
 
-/* --- 여기를 네 프로젝트 정보로 바꿔라 --- */
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "SENDER_ID",
-  appId: "APP_ID"
-};
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  const firebaseConfig = {
+    apiKey: "AIzaSyB6ktKQxiTzvbCHgaB2gd75_DmXHF5bApw",
+    authDomain: "the-great-dalmuti.firebaseapp.com",
+    databaseURL: "https://the-great-dalmuti-default-rtdb.firebaseio.com",
+    projectId: "the-great-dalmuti",
+    storageBucket: "the-great-dalmuti.firebasestorage.app",
+    messagingSenderId: "421041977864",
+    appId: "1:421041977864:web:b04725eab3c4cb436c2fbd",
+    measurementId: "G-MJCMWKCH8C"
+  };
 /* ----------------------------------------------------- */
 
 const app = initializeApp(firebaseConfig);
