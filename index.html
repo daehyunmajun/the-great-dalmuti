@@ -73,12 +73,13 @@ body { background:#f8fafc; font-family:Inter,system-ui,-apple-system,"Segoe UI",
 <!-- Firebase + PeerJS -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-import { getDatabase, ref, set, update, get, onValue, push, child, remove } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
+import { getDatabase, ref, set, update, get, onValue, push, child, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
+import Peer from 'https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js?module';
 
 const firebaseConfig = {
   apiKey: "AIzaSyB6ktKQxiTzvbCHgaB2gd75_DmXHF5bApw",
   authDomain: "the-great-dalmuti.firebaseapp.com",
-  databaseURL: "https://the-great-dalmuti-default-rtdb.firebaseio.com",
+  databaseURL: "https://the-great-dalmuti-default-rtdb.firebaseio.com/",
   projectId: "the-great-dalmuti",
   storageBucket: "the-great-dalmuti.firebasestorage.app",
   messagingSenderId: "421041977864",
@@ -111,10 +112,27 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== 상태 =====
   let localPlayerId = null, localName = null, localAvatar = null, currentRoomId = null, isHost = false;
   let mySelectedIndices = [];
+  let currentTurnListener = null;
 
-  // ===== PeerJS (나중에 제거 가능) =====
+  // ===== PeerJS =====
   const PEERJS_CONFIG = { host: 'peerjs.com', port: 443, secure: true };
   let peer, conn;
+
+  // ===== 내 턴 체크 =====
+  function isMyTurn() {
+    if (!currentRoomId || !localPlayerId) return false;
+    return new Promise(resolve => {
+      const roomRef = ref(db, `rooms/${currentRoomId}`);
+      const check = onValue(roomRef, snap => {
+        if (!snap.exists()) return;
+        const room = snap.val();
+        const players = Object.keys(room.players || {});
+        const currentPid = players[room.turnIndex % players.length];
+        resolve(currentPid === localPlayerId);
+        off(check);
+      }, { onlyOnce: true });
+    });
+  }
 
   // ===== 덱 생성 =====
   function makeDeck() {
@@ -128,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== 방 생성 =====
   createBtn.onclick = async () => {
     localName = (nameInput.value || 'Host').slice(0,16);
-    localAvatar = (avatarInput.value || '왕관').slice(0,64);
+    localAvatar = (avatarInput.value || '👑').slice(0,64);
     localPlayerId = 'P' + Math.floor(Math.random()*1e6);
     isHost = true;
     const roomId = Math.random().toString(36).slice(2,8).toUpperCase();
@@ -138,12 +156,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const roomRef = ref(db, `rooms/${roomId}`);
     await set(roomRef, {host: localPlayerId, turnIndex: 0, roundNumber: null, roundCount: null, table: {}, createdAt: Date.now()});
     const playersRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
-    await set(playersRef, {name: localName, avatar: localAvatar, hand: []});
+    await set(playersRef, {name: localName, avatar: localAvatar, hand: [], connected: true});
+    
+    // 퇴장 자동 정리
+    onDisconnect(playersRef).remove();
 
     hostDisplay.textContent = localName + ' (You)';
     listenRoom(roomId);
     attachRoomMetaWatcher(roomId);
-    setupPeer(localPlayerId);
     showMessage(`방 생성됨: ${roomId} (호스트)`);
   };
 
@@ -152,7 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const roomId = (roomInput.value || '').trim().toUpperCase();
     if (!roomId) { alert('방 ID 입력'); return; }
     localName = (nameInput.value || 'Player').slice(0,16);
-    localAvatar = (avatarInput.value || '웃음').slice(0,64);
+    localAvatar = (avatarInput.value || '🙂').slice(0,64);
     localPlayerId = 'P' + Math.floor(Math.random()*1e6);
     isHost = false;
     currentRoomId = roomId;
@@ -161,27 +181,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!snapshot.exists()) { alert('해당 방 없음'); return; }
 
     const playersRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
-    await set(playersRef, {name: localName, avatar: localAvatar, hand: []});
+    await set(playersRef, {name: localName, avatar: localAvatar, hand: [], connected: true});
+    onDisconnect(playersRef).remove();
 
     roomIdDisplay.textContent = roomId;
-    hostDisplay.textContent = '(joining...)';
     listenRoom(roomId);
     attachRoomMetaWatcher(roomId);
-    setupPeer(localPlayerId);
     showMessage(`방 참가: ${roomId}`);
   };
-
-  // ===== PeerJS 설정 =====
-  function setupPeer(id) {
-    peer = new Peer(id, PEERJS_CONFIG);
-    peer.on('open', () => console.log('Peer open:', id));
-    peer.on('connection', c => {
-      conn = c;
-      conn.on('data', data => console.log('받음:', data));
-      conn.on('open', () => console.log('연결됨'));
-    });
-    peer.on('error', err => console.error(err));
-  }
 
   // ===== 게임 시작 =====
   startGameBtn.onclick = async () => {
@@ -206,8 +213,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ===== 룸 리스너 =====
   function listenRoom(roomId) {
+    if (currentTurnListener) currentTurnListener();
     const roomRef = ref(db, `rooms/${roomId}`);
-    onValue(roomRef, snap => {
+    currentTurnListener = onValue(roomRef, snap => {
       if (!snap.exists()) return;
       const room = snap.val();
       renderPlayers(room.players || {}, room);
@@ -215,40 +223,44 @@ document.addEventListener('DOMContentLoaded', () => {
       if (room.turnIndex !== undefined) {
         const ids = Object.keys(room.players || {});
         const currentPid = ids[room.turnIndex % ids.length];
-        turnDisplay.textContent = room.players[currentPid]?.name || '-';
+        turnDisplay.textContent = room.players?.[currentPid]?.name || '-';
       }
     });
   }
 
-  // ===== 플레이어 렌더 =====
+  // ===== 플레이어 렌더 (연결 상태 표시) =====
   function renderPlayers(playersObj, room) {
     playersList.innerHTML = ''; playerAreas.innerHTML = '';
     const ids = Object.keys(playersObj || {});
     ids.forEach(pid => {
       const p = playersObj[pid];
       const div = document.createElement('div');
-      div.className = 'flex items-center gap-2 p-2 bg-slate-50 rounded';
-      const ava = document.createElement('div'); ava.className = 'avatar'; ava.textContent = p.avatar || '웃음';
+      div.className = `flex items-center gap-2 p-2 rounded ${p.connected ? 'bg-emerald-50' : 'bg-red-50'}`;
+      const ava = document.createElement('div'); 
+      ava.className = 'avatar'; 
+      ava.textContent = p.avatar || '🙂';
       const txt = document.createElement('div');
       txt.innerHTML = `<div class="text-sm font-semibold">${p.name}</div><div class="text-xs text-gray-500">${(p.hand||[]).length}장</div>`;
+      if (!p.connected) txt.innerHTML += '<div class="text-xs text-red-500"> (퇴장)</div>';
       if (pid === localPlayerId) txt.innerHTML += '<div class="text-xs text-amber-500"> (You)</div>';
       div.appendChild(ava); div.appendChild(txt); playersList.appendChild(div);
 
       const seatDiv = document.createElement('div');
-      seatDiv.innerHTML = `<div class="avatar inline-block mb-1">${p.avatar||'웃음'}</div><div class="text-sm font-semibold">${p.name}</div>`;
+      seatDiv.innerHTML = `<div class="avatar inline-block mb-1 ${!p.connected ? 'opacity-50' : ''}">${p.avatar||'🙂'}</div><div class="text-sm font-semibold ${!p.connected ? 'text-gray-400 line-through' : ''}">${p.name}</div>`;
       playerAreas.appendChild(seatDiv);
     });
     const myHand = playersObj[localPlayerId]?.hand || [];
     renderMyHand(myHand, room);
   }
 
-  // ===== 내 카드 렌더 =====
+  // ===== 나머지 함수들 (renderMyHand, renderTable, startHostActionListener, attachRoomMetaWatcher, showMessage) 동일 =====
   function renderMyHand(hand, room) {
     myHandDiv.innerHTML = '';
     hand.sort((a,b) => a-b).forEach((card, idx) => {
       const d = document.createElement('div'); d.className = 'card bg-white';
       d.innerText = card === 0 ? '광대' : card;
-      d.onclick = () => {
+      d.onclick = async () => {
+        if (!(await isMyTurn())) return alert('내 턴이 아닙니다!');
         if (mySelectedIndices.includes(idx)) {
           mySelectedIndices = mySelectedIndices.filter(i => i !== idx);
           d.classList.remove('selected');
@@ -261,7 +273,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ===== 테이블 렌더 =====
   function renderTable(tbl) {
     tableArea.innerHTML = '';
     const entries = Object.entries(tbl || {});
@@ -277,21 +288,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ===== 패스/제출 =====
   passBtn.onclick = async () => {
     if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
+    if (!(await isMyTurn())) return alert('내 턴이 아닙니다!');
     await push(ref(db, `rooms/${currentRoomId}/actions`), {type: 'pass', playerId: localPlayerId, ts: Date.now()});
     mySelectedIndices = [];
   };
 
   submitBtn.onclick = async () => {
     if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
+    if (!(await isMyTurn())) return alert('내 턴이 아닙니다!');
     if (mySelectedIndices.length === 0) return alert('카드 선택');
     await push(ref(db, `rooms/${currentRoomId}/actions`), {type: 'play', playerId: localPlayerId, selectedIndices: mySelectedIndices, ts: Date.now()});
     mySelectedIndices = [];
   };
 
-  // ===== 호스트 액션 처리 =====
+  // 호스트 액션 처리 (첫 턴 허용 수정)
   function startHostActionListener(roomId) {
     const actionsRef = ref(db, `rooms/${roomId}/actions`);
     onValue(actionsRef, async snap => {
@@ -318,12 +330,23 @@ document.addEventListener('DOMContentLoaded', () => {
           const played = sel.map(i => hand[i]);
 
           const nonWild = played.filter(c => c !== 0);
-          let number = nonWild.length ? nonWild[0] : 0;
-          if (nonWild.length > 0 && !nonWild.every(c => c === number)) { await remove(child(actionsRef, k)); continue; }
+          let number = nonWild.length ? nonWild[0] : 13; // 광대 단독 = 13
+          if (nonWild.length > 0 && !nonWild.every(c => c === number)) { 
+            await remove(child(actionsRef, k)); 
+            continue; 
+          }
 
-          const roundCount = room.roundCount; const roundNumber = room.roundNumber;
-          if (roundCount != null && played.length !== roundCount) { await remove(child(actionsRef, k)); continue; }
-          if (number >= roundNumber && number !== 0) { await remove(child(actionsRef, k)); continue; }
+          // 첫 턴이거나 같은 장수 + 낮은 숫자
+          const roundCount = room.roundCount; 
+          const roundNumber = room.roundNumber;
+          if (roundCount != null && played.length !== roundCount) { 
+            await remove(child(actionsRef, k)); 
+            continue; 
+          }
+          if (roundNumber != null && number >= roundNumber) { 
+            await remove(child(actionsRef, k)); 
+            continue; 
+          }
 
           const newHand = hand.slice(); sel.forEach(i => newHand.splice(i, 1));
           const updates = {};
@@ -341,7 +364,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ===== 호스트 감지 =====
   function attachRoomMetaWatcher(roomId) {
     const metaRef = ref(db, `rooms/${roomId}/host`);
     onValue(metaRef, snap => {
@@ -350,7 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ===== 메시지 =====
   function showMessage(text) { alert(text); }
 });
 </script>
