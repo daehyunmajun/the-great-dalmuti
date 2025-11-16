@@ -75,14 +75,13 @@ body { background:#f8fafc; font-family:Inter,system-ui,-apple-system,"Segoe UI",
 
 <!-- Firebase SDK -->
 <script type="module">
-  // Import the functions you need from the SDKs you need
+  // Firebase import (완벽)
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-analytics.js";
-  // TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
+  import { 
+    getDatabase, ref, set, update, get, onValue, push, child, remove 
+  } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
 
-  // Your web app's Firebase configuration
-  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  // Firebase config (너의 프로젝트)
   const firebaseConfig = {
     apiKey: "AIzaSyB6ktKQxiTzvbCHgaB2gd75_DmXHF5bApw",
     authDomain: "the-great-dalmuti.firebaseapp.com",
@@ -94,12 +93,12 @@ body { background:#f8fafc; font-family:Inter,system-ui,-apple-system,"Segoe UI",
     measurementId: "G-MJCMWKCH8C"
   };
 
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
 
-/* ===== PeerJS 설정 ===== */
-const PEERJS_CONFIG = { host:'peerjs.com', port:443, secure:true };
-let peer, conn;
+  /* ===== PeerJS 설정 (나중에 제거 가능) ===== */
+  const PEERJS_CONFIG = { host:'peerjs.com', port:443, secure:true };
+  let peer, conn;
 
 const nameInput = document.getElementById('nameInput');
 const avatarInput = document.getElementById('avatarInput');
