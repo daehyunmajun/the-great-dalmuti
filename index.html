@@ -1,96 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>달무티 - Firebase + PeerJS MVP</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #f8fafc; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+  .card { width:72px; height:104px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; cursor:pointer; user-select:none; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
+  .card.selected{ outline:4px solid #f97316; transform:translateY(-6px); }
+  .card.disabled{ opacity:0.4; cursor:not-allowed; }
+  .avatar { width:36px; height:36px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-weight:700; background:#eef2ff; }
+</style>
+</head>
+<body class="p-4 md:p-8">
+
+<div class="max-w-5xl mx-auto">
+  <header class="mb-6">
+    <h1 class="text-2xl font-extrabold text-sky-700">달무티 MVP</h1>
+    <p class="text-sm text-gray-600">Firebase + PeerJS 실시간 테스트</p>
+  </header>
+
+  <section class="mb-4 grid gap-3 md:grid-cols-3">
+    <input id="nameInput" placeholder="닉네임" class="p-2 border rounded" />
+    <input id="avatarInput" placeholder="아바타(이모지)" class="p-2 border rounded" />
+    <div class="flex gap-2">
+      <button id="createBtn" class="px-3 py-2 bg-green-600 text-white rounded">방 생성 (호스트)</button>
+      <input id="roomInput" placeholder="방 ID 입력" class="p-2 border rounded" />
+      <button id="joinBtn" class="px-3 py-2 bg-blue-600 text-white rounded">참가</button>
+    </div>
+  </section>
+
+  <section class="mb-6 grid md:grid-cols-3 gap-4">
+    <div class="col-span-1 bg-white p-4 rounded shadow">
+      <h3 class="font-semibold mb-2">방 정보</h3>
+      <p>방 ID: <span id="roomIdDisplay" class="font-mono"></span></p>
+      <p>호스트: <span id="hostDisplay">-</span></p>
+      <p>현재 턴: <span id="turnDisplay">-</span></p>
+      <div class="mt-3">
+        <button id="startGameBtn" class="px-3 py-2 bg-orange-500 text-white rounded">게임 시작</button>
+      </div>
+    </div>
+    <div class="col-span-2 bg-white p-4 rounded shadow">
+      <h3 class="font-semibold mb-2">플레이어 목록</h3>
+      <div id="playersList" class="flex gap-3 flex-wrap"></div>
+    </div>
+  </section>
+
+  <section class="mb-6 bg-white p-4 rounded shadow">
+    <div class="grid grid-cols-12 gap-4 items-center">
+      <div class="col-span-3 text-center" id="p2Area"></div>
+      <div class="col-span-3 text-center" id="p1Area"></div>
+      <div class="col-span-6 md:col-span-6">
+        <div class="mb-3 flex justify-between items-center">
+          <div><strong>테이블</strong></div>
+          <div>
+            <button id="passBtn" class="px-3 py-2 bg-gray-200 rounded">패스</button>
+            <button id="submitBtn" class="px-3 py-2 bg-amber-500 text-white rounded ml-2">제출</button>
+          </div>
+        </div>
+        <div class="mb-3" id="tableArea"></div>
+        <div class="mt-3">
+          <div class="text-sm text-gray-500 mb-2">내 카드 (클릭 → 선택)</div>
+          <div id="myHand" class="flex gap-2 flex-wrap"></div>
+        </div>
+      </div>
+      <div class="col-span-3 text-center" id="p3Area"></div>
+      <div class="col-span-12 text-center mt-4" id="p4Area"></div>
+    </div>
+  </section>
+
+  <footer class="text-xs text-gray-500">MVP 테스트용</footer>
+</div>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-import { getDatabase, ref, set, get, update, push, onValue, remove, child } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
+import { getDatabase, ref, set, get, update, onValue, push, remove, child } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
 
-// Firebase config (기존 그대로)
 const firebaseConfig = {
   apiKey: "AIzaSyB6ktKQxiTzvbCHgaB2gd75_DmXHF5bApw",
   authDomain: "the-great-dalmuti.firebaseapp.com",
   databaseURL: "https://the-great-dalmuti-default-rtdb.firebaseio.com",
   projectId: "the-great-dalmuti",
-  storageBucket: "the-great-dalmuti.firebasestorage.app",
+  storageBucket: "the-great-dalmuti.appspot.com",
   messagingSenderId: "421041977864",
-  appId: "1:421041977864:web:b04725eab3c4cb436c2fbd",
-  measurementId: "G-MJCMWKCH8C"
+  appId: "1:421041977864:web:b04725eab3c4cb436c2fbd"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-/* ===== PeerJS ===== */
-import Peer from "https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js";
+// ===== PeerJS =====
+import Peer from 'https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js';
+const PEERJS_CONFIG = { host:'peerjs.com', port:443, secure:true };
+let peer, conn;
 
-// 공식 PeerJS 서버 사용 (0.peerjs.com 종료 문제 해결)
-const PEERJS_CONFIG = { host: 'peerjs.com', port: 443, secure: true };
-let peer = null;
-let connections = {}; // 다른 플레이어와의 DataConnection 저장
+// ===== DOM =====
+const nameInput=document.getElementById('nameInput');
+const avatarInput=document.getElementById('avatarInput');
+const createBtn=document.getElementById('createBtn');
+const joinBtn=document.getElementById('joinBtn');
+const roomInput=document.getElementById('roomInput');
+const roomIdDisplay=document.getElementById('roomIdDisplay');
+const hostDisplay=document.getElementById('hostDisplay');
+const playersList=document.getElementById('playersList');
+const startGameBtn=document.getElementById('startGameBtn');
+const turnDisplay=document.getElementById('turnDisplay');
+const myHandDiv=document.getElementById('myHand');
+const tableArea=document.getElementById('tableArea');
+const passBtn=document.getElementById('passBtn');
+const submitBtn=document.getElementById('submitBtn');
+const p1Area=document.getElementById('p1Area');
+const p2Area=document.getElementById('p2Area');
+const p3Area=document.getElementById('p3Area');
+const p4Area=document.getElementById('p4Area');
 
-function initPeer(playerId){
-  peer = new Peer(playerId, PEERJS_CONFIG);
+// ===== 상태 =====
+let localPlayerId=null, localName=null, localAvatar=null, currentRoomId=null, isHost=false;
+let mySelectedIndices=[];
 
-  peer.on('open', id => {
-    console.log('PeerJS ready with ID:', id);
-  });
+// ===== 카드 =====
+function makeDeck(){
+  const counts={12:12,11:11,10:10,9:9,8:8,7:7,6:6,5:5,4:4,3:3,2:2,1:1};
+  const deck=[];
+  for(const [n,c] of Object.entries(counts)) for(let i=0;i<c;i++) deck.push(Number(n));
+  deck.push(0,0); // 광대
+  return deck;
+}
 
-  peer.on('connection', conn => {
-    console.log('Incoming connection from', conn.peer);
-    connections[conn.peer] = conn;
+// ===== 방 생성/참가 & Peer 연결 =====
+createBtn.onclick=async()=>{
+  localName=(nameInput.value||'Host').slice(0,16);
+  localAvatar=(avatarInput.value||'👑').slice(0,64);
+  localPlayerId='P'+Math.floor(Math.random()*1000000);
+  isHost=true;
+  const roomId=Math.random().toString(36).slice(2,8).toUpperCase();
+  currentRoomId=roomId; roomIdDisplay.textContent=roomId;
 
-    conn.on('data', data => {
-      console.log('Received from', conn.peer, data);
-      // 여기서 join 메시지 등 처리 가능
+  peer=new Peer(localPlayerId, PEERJS_CONFIG);
+  peer.on('open', id=>console.log('호스트 Peer ID:', id));
+  peer.on('connection', c=>{
+    c.on('data', msg=>{
+      console.log('호스트 수신:', msg);
+      // 호스트는 메시지 DB에 push
+      push(ref(db, `rooms/${roomId}/actions`), msg);
     });
+  });
 
-    conn.on('close', () => {
-      console.log('Connection closed:', conn.peer);
-      delete connections[conn.peer];
+  const roomRef=ref(db,`rooms/${roomId}`);
+  await set(roomRef,{host:localPlayerId,turnIndex:0,roundNumber:null,roundCount:null,table:{},createdAt:Date.now()});
+  await set(ref(db,`rooms/${roomId}/players/${localPlayerId}`),{name:localName,avatar:localAvatar,hand:[]});
+  hostDisplay.textContent=localName+' (You)';
+  listenRoom(roomId); attachRoomMetaWatcher(roomId);
+  alert(`방 생성됨: ${roomId}`);
+};
+
+joinBtn.onclick=async()=>{
+  const roomId=(roomInput.value||'').trim().toUpperCase();
+  if(!roomId){ alert('방 ID 입력'); return; }
+  localName=(nameInput.value||'Player').slice(0,16);
+  localAvatar=(avatarInput.value||'🙂').slice(0,64);
+  localPlayerId='P'+Math.floor(Math.random()*1000000);
+  isHost=false;
+  currentRoomId=roomId;
+
+  peer=new Peer(localPlayerId, PEERJS_CONFIG);
+  peer.on('open', id=>console.log('참가 Peer ID:', id));
+  peer.on('error', err=>alert('PeerJS 연결 실패: '+err));
+
+  // 호스트 Peer ID는 roomId와 같은 값 사용(호스트가 roomId 그대로)
+  conn=peer.connect(roomId);
+  conn.on('open',()=>conn.send({type:'join',name:localName,avatar:localAvatar,playerId:localPlayerId}));
+
+  // DB 참가 등록
+  const snapshot=await get(ref(db,`rooms/${roomId}`));
+  if(!snapshot.exists()){ alert('해당 방 없음'); return; }
+  await set(ref(db,`rooms/${roomId}/players/${localPlayerId}`),{name:localName,avatar:localAvatar,hand:[]});
+  roomIdDisplay.textContent=roomId;
+  hostDisplay.textContent='(joining...)';
+  listenRoom(roomId); attachRoomMetaWatcher(roomId);
+  alert(`방 참가 요청 전송: ${roomId}`);
+};
+
+// ===== 게임 시작 (호스트) =====
+startGameBtn.onclick=async()=>{
+  if(!currentRoomId||!isHost) return alert('호스트만 게임 시작 가능');
+  const r=await get(ref(db,`rooms/${currentRoomId}/players`));
+  const players=r.exists()?Object.keys(r.val()):[];
+  if(players.length===0) return alert('참가자가 없습니다');
+
+  const deck=makeDeck().sort(()=>Math.random()-0.5);
+  const hands={}; players.forEach(pid=>hands[pid]=[]);
+  let idx=0; deck.forEach(card=>{const pid=players[idx]; hands[pid].push(card); idx=(idx+1)%players.length;});
+
+  const updates={}; for(const pid of players) updates[`rooms/${currentRoomId}/players/${pid}/hand`]=hands[pid];
+  updates[`rooms/${currentRoomId}/turnIndex`]=0; updates[`rooms/${currentRoomId}/roundNumber`]=null;
+  updates[`rooms/${currentRoomId}/roundCount`]=null; updates[`rooms/${currentRoomId}/table`]={};
+  await update(ref(db),updates);
+  alert('카드 분배 완료 — 게임 시작');
+};
+
+// ===== 룸/플레이어/테이블 렌더 =====
+function listenRoom(roomId){
+  const roomRef=ref(db,`rooms/${roomId}`);
+  onValue(roomRef,snap=>{
+    if(!snap.exists()){ alert('방 삭제됨'); return; }
+    const room=snap.val();
+    roomIdDisplay.textContent=roomId;
+    turnDisplay.textContent=room.turnIndex!==undefined?room.turnIndex:'-';
+    get(ref(db,`rooms/${roomId}/players`)).then(snapPlayers=>{
+      const playersObj=snapPlayers.exists()?snapPlayers.val():{};
+      renderPlayers(playersObj,room);
     });
-  });
-
-  peer.on('error', err => {
-    console.error('PeerJS error:', err);
-    alert('PeerJS 연결 오류: ' + err);
+    renderTable(room.table||{});
   });
 }
 
-// 참가자가 방에 접속할 때
-async function joinRoom(roomId){
-  const localPlayerId = 'P' + Math.floor(Math.random()*1000000);
-  initPeer(localPlayerId);
-
-  // 호스트 ID 가져오기 (Firebase)
-  const hostSnap = await get(ref(db, `rooms/${roomId}/host`));
-  if(!hostSnap.exists()){ alert('방 없음'); return; }
-  const hostId = hostSnap.val();
-
-  // 호스트에게 연결
-  const conn = peer.connect(hostId);
-  connections[hostId] = conn;
-
-  conn.on('open', () => {
-    console.log('Connected to host:', hostId);
-    conn.send({ type: 'join', playerId: localPlayerId });
+function renderPlayers(playersObj,room){
+  playersList.innerHTML='';
+  const ids=Object.keys(playersObj||{});
+  ids.forEach(pid=>{
+    const p=playersObj[pid]; const div=document.createElement('div');
+    div.className='flex items-center gap-2 p-2 bg-slate-50 rounded';
+    const ava=document.createElement('div'); ava.className='avatar'; ava.textContent=p.avatar||'🙂';
+    const txt=document.createElement('div'); txt.innerHTML=`<div class="text-sm font-semibold">${p.name}</div><div class="text-xs text-gray-500">${(p.hand||[]).length}장</div>`;
+    if(pid===localPlayerId) txt.innerHTML+='<div class="text-xs text-amber-500"> (You)</div>';
+    div.appendChild(ava); div.appendChild(txt); playersList.appendChild(div);
   });
+  const seatIds=Object.keys(playersObj||{});
+  p1Area.innerHTML=seatIds[0]?seatHtml(seatIds[0],playersObj[seatIds[0]],room.host):'';
+  p2Area.innerHTML=seatIds[1]?seatHtml(seatIds[1],playersObj[seatIds[1]],room.host):'';
+  p3Area.innerHTML=seatIds[2]?seatHtml(seatIds[2],playersObj[seatIds[2]],room.host):'';
+  p4Area.innerHTML=seatIds[3]?seatHtml(seatIds[3],playersObj[seatIds[3]],room.host):'';
+  const myHand=(playersObj[localPlayerId]&&playersObj[localPlayerId].hand)?playersObj[localPlayerId].hand.slice():[];
+  renderMyHand(myHand,room);
+  if(room&&room.turnIndex!==undefined){const idsOrder=Object.keys(playersObj||{}); const ti=room.turnIndex%idsOrder.length;
+    const currentPid=idsOrder[ti]; turnDisplay.textContent=playersObj[currentPid]?playersObj[currentPid].name:'-';}
+}
 
-  conn.on('data', data => {
-    console.log('Data from host:', data);
-  });
+function seatHtml(pid,p,hostId){return `<div class="text-sm"><div class="avatar inline-block mr-2">${p.avatar||'🙂'}</div><div class="font-semibold">${p.name}${pid===hostId? ' (H)':''}</div><div class="text-xs text-gray-500">${(p.hand||[]).length}장</div></div>`;}
+function renderMyHand(hand,room){myHandDiv.innerHTML='';hand.sort((a,b)=>a-b).forEach((card,idx)=>{const d=document.createElement('div');d.className='card bg-white';d.innerText=card===0?'광대':card;
+  d.onclick=()=>{if(mySelectedIndices.includes(idx)){mySelectedIndices=mySelectedIndices.filter(i=>i!==idx);d.classList.remove('selected');}else{mySelectedIndices.push(idx);d.classList.add('selected');}};
+  myHandDiv.appendChild(d);});}
 
-  conn.on('close', () => {
-    console.log('Disconnected from host');
-    delete connections[hostId];
+function renderTable(tbl){tableArea.innerHTML='';const entries=Object.entries(tbl||{});if(entries.length===0){tableArea.innerHTML='<div class="text-sm text-gray-500">아직 제출된 카드 없음.</div>';return;}entries.forEach(([pid,cards])=>{const node=document.createElement('div');node.className='mb-2';node.innerHTML=`<div class="text-xs text-gray-500">${pid}</div><div class="flex gap-2 mt-1">${cards.map(c=>`<div class="card bg-slate-50">${c===0?'광대':c}</div>`).join('')}</div>`;tableArea.appendChild(node);});}
+
+// ===== 액션: 패스/제출 =====
+passBtn.onclick=async()=>{if(!currentRoomId||!localPlayerId)return alert('방 참가 후 이용');await push(ref(db,`rooms/${currentRoomId}/actions`),{type:'pass',playerId:localPlayerId,ts:Date.now()});mySelectedIndices=[];}
+submitBtn.onclick=async()=>{if(!currentRoomId||!localPlayerId)return alert('방 참가 후 이용');if(mySelectedIndices.length===0)return alert('제출할 카드 선택');await push(ref(db,`rooms/${currentRoomId}/actions`),{type:'play',playerId:localPlayerId,selectedIndices:mySelectedIndices,ts:Date.now()});mySelectedIndices=[];}
+
+// ===== 호스트 액션 큐 처리 =====
+function startHostActionListener(roomId){
+  const actionsRef=ref(db,`rooms/${roomId}/actions`);
+  onValue(actionsRef,async snap=>{
+    if(!isHost)return;if(!snap.exists())return;const actions=snap.val();
+    const keys=Object.keys(actions).sort();
+    for(const k of keys){
+      const a=actions[k];
+      const roomSnap=await get(ref(db,`rooms/${roomId}`));
+      if(!roomSnap.exists())continue;const room=roomSnap.val();
+      const playersSnap=await get(ref(db,`rooms/${roomId}/players`));const playersObj=playersSnap.exists()?playersSnap.val():{};
+      const order=Object.keys(playersObj||{});if(order.length===0){await remove(child(actionsRef,k));continue;}
+      const expectedPid=order[room.turnIndex%order.length];if(a.playerId!==expectedPid){await remove(child(actionsRef,k));continue;}
+      if(a.type==='pass'){room.turnIndex=(room.turnIndex+1)%order.length;await update(ref(db,`rooms/${roomId}`),{turnIndex:room.turnIndex});}
+      else if(a.type==='play'){const myHand=playersObj[a.playerId].hand;const played=a.selectedIndices.map(i=>myHand[i]);played.forEach(c=>{const idx=myHand.indexOf(c);if(idx>=0)myHand.splice(idx,1);});await update(ref(db,`rooms/${roomId}/players/${a.playerId}/hand`),myHand);room.table[a.playerId]=played;room.turnIndex=(room.turnIndex+1)%order.length;await update(ref(db,`rooms/${roomId}`),{turnIndex:room.turnIndex,table:room.table});}
+      await remove(child(actionsRef,k));
+    }
   });
 }
 
-// 호스트가 방 생성할 때
-function createRoom(){
-  const hostId = 'P' + Math.floor(Math.random()*1000000);
-  initPeer(hostId);
-
-  // Firebase에 host 등록
-  const roomId = Math.random().toString(36).slice(2,8).toUpperCase();
-  set(ref(db, `rooms/${roomId}/host`), hostId);
-
-  return { roomId, hostId };
-}
+// ===== 룸 메타 & 액션 =====
+function attachRoomMetaWatcher(roomId){if(isHost)startHostActionListener(roomId);}
 </script>
+
+</body>
+</html>
