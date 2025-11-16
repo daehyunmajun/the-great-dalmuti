@@ -17,7 +17,7 @@ body { font-family: Arial; padding: 20px; }
   font-size: 20px;
 }
 .selected { background: #ffc107; font-weight: bold; }
-#playerList { margin-top: 15px; }
+#playersInfo, #playerList { margin-top: 15px; }
 button { margin-top: 5px; margin-right: 5px; }
 </style>
 </head>
@@ -55,7 +55,6 @@ deck.push(0,0); // 광대 2장
 
 // ===== P2P 세팅 =====
 let peer=null, conn=null, isHost=false, playerId=null, roomId=null;
-let gameStarted=false;
 
 // 게임 상태
 let gameState = {roundNumber:null, roundCount:null, turnOrder:[], currentTurn:0, players:{}};
@@ -75,7 +74,6 @@ function renderPlayerCards(){
     area.appendChild(div);
   });
   updatePlayerList();
-  updateTurnInfo();
 }
 
 function toggleCard(idx){
@@ -95,9 +93,8 @@ function updateTurnInfo(){
   const info=document.getElementById("turnInfo");
   if(gameState.turnOrder.length===0) info.innerText="대기 중";
   else{
-    if (gameState.currentTurn >= gameState.turnOrder.length) gameState.currentTurn=0;
     const pid=gameState.turnOrder[gameState.currentTurn];
-    info.innerText=gameState.players[pid]?.name ? `턴: ${gameState.players[pid].name}` : "플레이어 로딩 중...";
+    info.innerText=`턴: ${gameState.players[pid].name}`;
   }
 }
 
@@ -105,72 +102,59 @@ function updateTableArea(msg){
   document.getElementById("tableArea").innerText=msg;
 }
 
+// ===== 내 차례 확인 =====
 function isMyTurn(){
   return gameState.turnOrder[gameState.currentTurn] === playerId;
 }
 
-// ===== 카드 액션 =====
+// ===== 카드 내기 =====
 function playSelected(){
   if(!isMyTurn()) return alert("지금은 당신 차례가 아닙니다!");
   if(!selectedCards.length) return alert("카드를 선택하세요");
+  const hand = gameState.players[playerId].hand;
+  let cards = selectedCards.map(i=>hand[i]);
+  let normal = cards.filter(x=>x!==0);
+  let number = normal.length?normal[0]:0;
 
-  const indices = [...selectedCards];
+  if(gameState.roundCount!==null){
+    if(cards.length!==gameState.roundCount) return alert(`${gameState.roundCount}장만 낼 수 있습니다`);
+    if(number>=gameState.roundNumber) return alert(`${gameState.roundNumber}보다 낮아야 합니다`);
+    if(!normal.every(n=>n===number)) return alert("같은 숫자 카드만 낼 수 있습니다(광대 허용)");
+  }
+
+  selectedCards.sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
   selectedCards=[];
-  renderPlayerCards();
 
-  if(isHost) processPlay(playerId, indices);
-  else conn.send({type:"action",action:"play",selectedIndices:indices});
+  gameState.roundNumber=number;
+  gameState.roundCount=cards.length;
+  updateTurnInfo();
+  updateTableArea(`${gameState.players[playerId].name}: ${cards.length}장 (${number===0?"광대 포함":number})`);
+
+  if(isHost) broadcastGameState();
+  nextTurn();
+  renderPlayerCards();
 }
 
 function playerPass(){
   if(!isMyTurn()) return alert("지금은 당신 차례가 아닙니다!");
-  if(isHost) processPass(playerId);
-  else conn.send({type:"action",action:"pass"});
+  updateTableArea(`${gameState.players[playerId].name} 패스`);
+  nextTurn();
 }
 
+// ===== 턴 넘기기 =====
 function nextTurn(){
   gameState.currentTurn=(gameState.currentTurn+1)%gameState.turnOrder.length;
   updateTurnInfo();
+  renderPlayerCards();
+  if(isHost) broadcastGameState();
 }
 
-// ===== Host 전용 처리 =====
-function processPlay(pid, indices){
-  const hand = gameState.players[pid].hand;
-  if (!indices.every(i=>i<hand.length)) return;
-  let cards=indices.map(i=>hand[i]);
-  let normal=cards.filter(x=>x!==0);
-  let number=normal.length?normal[0]:0;
-
-  if(gameState.roundCount!==null){
-    if(cards.length!==gameState.roundCount) return;
-    if(number>=gameState.roundNumber) return;
-    if(normal.length>0 && !normal.every(n=>n===number)) return;
-  }
-
-  indices.sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
-  gameState.roundNumber=number;
-  gameState.roundCount=cards.length;
-  updateTableArea(`${gameState.players[pid].name}: ${cards.length}장 (${number===0?"광대 포함":number})`);
-
-  nextTurn();
-  broadcastGameState();
-}
-
-function processPass(pid){
-  updateTableArea(`${gameState.players[pid].name} 패스`);
-  nextTurn();
-  broadcastGameState();
-}
-
-// ===== Host/Join =====
+// ===== Host/Join 버튼 =====
 document.getElementById("hostBtn").onclick=()=>{
   playerId="P"+Math.floor(Math.random()*10000);
   isHost=true;
   peer=new Peer(playerId);
-  peer.on('connection',c=>{
-    c.on('data',d=>handleDataFromPlayer(d,c));
-  });
-  peer.on('open',id=>{
+  peer.on('open', id=>{
     roomId=id;
     alert(`방장 생성 완료, 방 ID: ${roomId}`);
     setupHost();
@@ -178,17 +162,15 @@ document.getElementById("hostBtn").onclick=()=>{
 };
 
 document.getElementById("joinBtn").onclick=()=>{
-  const name=document.getElementById("playerName").value||"Player1";
+  const name=document.getElementById("playerName").value||"Player";
   playerId="P"+Math.floor(Math.random()*10000);
   roomId=document.getElementById("roomId").value;
   if(!roomId) return alert("방 ID 필요");
   peer=new Peer(playerId);
-  peer.on('open',()=>{
+  peer.on('open',id=>{
     conn=peer.connect(roomId);
-    conn.on('open',()=>{
-      conn.on('data',handleData);
-      conn.send({type:"join",name:name,id:playerId});
-    });
+    conn.on('open',()=>{conn.send({type:"join",name:name,id:playerId});});
+    conn.on('data',handleData);
   });
 };
 
@@ -197,64 +179,50 @@ function setupHost(){
   const name=document.getElementById("playerName").value||"Host";
   gameState.players[playerId]={name:name,hand:[],pass:false};
   gameState.turnOrder.push(playerId);
-  if(!gameStarted){distributeCards(); gameStarted=true;}
+  peer.on('connection',c=>{c.on('data',d=>handleDataFromPlayer(d,c));});
+  distributeCards();
   updateTurnInfo();
   renderPlayerCards();
   broadcastGameState();
 }
 
-// ===== 카드 분배 =====
+// ===== 카드 분배 (접속 인원 기준) =====
 function distributeCards(){
   const ids=gameState.turnOrder;
-  if(ids.length===0) return;
   const shuffled=[...deck].sort(()=>Math.random()-0.5);
-  ids.forEach(pid=>gameState.players[pid].hand=[]);
-  let idx=0;
-  shuffled.forEach(card=>{
-    const pid=ids[idx];
-    gameState.players[pid].hand.push(card);
-    idx=(idx+1)%ids.length;
-  });
+  const perPlayer=Math.floor(shuffled.length/ids.length);
+  for(let i=0;i<ids.length;i++){
+    const pid=ids[i];
+    gameState.players[pid].hand=shuffled.slice(i*perPlayer,(i+1)*perPlayer);
+  }
 }
 
 // ===== 데이터 처리 =====
 function handleData(d){
-  if(d.type==="gameState"){
-    const pidSelf=playerId;
-    const remote=d.state;
-    for(const pid in remote.players){
-      if(pid!==pidSelf) remote.players[pid].hand=[];
-    }
-    const myOld=gameState.players[pidSelf]?.hand||[];
-    const myNew=remote.players[pidSelf]?.hand||[];
-    if(myOld.length!==myNew.length) selectedCards=[];
-    gameState=remote;
-    renderPlayerCards();
-  }
+  if(d.type==="gameState") gameState=d.state;
+  updateTurnInfo();
+  renderPlayerCards();
 }
 
 function handleDataFromPlayer(d,conn){
-  const pid=conn.peer;
   if(d.type==="join"){
+    const pid=d.id;
     gameState.players[pid]={name:d.name,hand:[],pass:false};
     gameState.turnOrder.push(pid);
-    if(!gameStarted){distributeCards(); gameStarted=true;}
+    distributeCards();
+    updatePlayerList();
+    conn.send({type:"gameState",state:gameState});
     broadcastGameState();
-  } else if(d.type==="action"){
-    if(gameState.turnOrder[gameState.currentTurn]!==pid) return;
-    if(d.action==="play") processPlay(pid,d.selectedIndices);
-    else if(d.action==="pass") processPass(pid);
   }
 }
 
-// ===== 브로드캐스트 =====
+// ===== 상태 브로드캐스트 =====
 function broadcastGameState(){
   for(const c in peer.connections){
     for(const con of peer.connections[c]){
       con.send({type:"gameState",state:gameState});
     }
   }
-  renderPlayerCards();
 }
 </script>
 </body>
