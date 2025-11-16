@@ -111,17 +111,36 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== 상태 =====
   let localPlayerId = null, currentRoomId = null, isHost = false;
   let mySelectedIndices = [];
-  let currentTurnListener = null;
+  let currentRoomData = null; // 실시간 룸 데이터 캐시
 
-  // ===== 내 턴 체크 =====
-  const isMyTurn = async () => {
-    if (!currentRoomId || !localPlayerId) return false;
-    const snap = await get(ref(db, `rooms/${currentRoomId}`));
-    if (!snap.exists()) return false;
-    const room = snap.val();
-    const players = Object.keys(room.players || {});
+  // ===== 룸 데이터 실시간 캐시 =====
+  let roomListener = null;
+  const listenRoom = (roomId) => {
+    if (roomListener) roomListener();
+    const roomRef = ref(db, `rooms/${roomId}`);
+    roomListener = onValue(roomRef, (snap) => {
+      if (!snap.exists()) return;
+      currentRoomData = snap.val();
+      renderPlayers(currentRoomData.players || {});
+      renderTable(currentRoomData.table || {});
+      updateTurnDisplay();
+    });
+  };
+
+  const updateTurnDisplay = () => {
+    if (!currentRoomData || !currentRoomData.players) return;
+    const ids = Object.keys(currentRoomData.players);
+    if (ids.length === 0 || currentRoomData.turnIndex === undefined) return;
+    const currentPid = ids[currentRoomData.turnIndex % ids.length];
+    turnDisplay.textContent = currentRoomData.players[currentPid]?.name || '-';
+  };
+
+  // ===== 내 턴 체크 (캐시 사용) =====
+  const isMyTurn = () => {
+    if (!currentRoomData || !localPlayerId) return false;
+    const players = Object.keys(currentRoomData.players || {});
     if (players.length === 0) return false;
-    const currentPid = players[room.turnIndex % players.length];
+    const currentPid = players[currentRoomData.turnIndex % players.length];
     return currentPid === localPlayerId;
   };
 
@@ -154,7 +173,6 @@ document.addEventListener('DOMContentLoaded', () => {
     listenRoom(roomId);
     attachRoomMetaWatcher(roomId);
     showMessage(`방 생성됨: ${roomId} (호스트)`);
-    // setupPeer(localPlayerId); ← 삭제됨
   };
 
   // ===== 방 참가 =====
@@ -178,7 +196,6 @@ document.addEventListener('DOMContentLoaded', () => {
     listenRoom(roomId);
     attachRoomMetaWatcher(roomId);
     showMessage(`방 참가: ${roomId}`);
-    // setupPeer(localPlayerId); ← 삭제됨
   };
 
   // ===== 게임 시작 =====
@@ -200,23 +217,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updates[`rooms/${currentRoomId}/table`] = {};
     await update(ref(db), updates);
     showMessage('카드 분배 완료');
-  };
-
-  // ===== 룸 리스너 =====
-  const listenRoom = (roomId) => {
-    if (currentTurnListener) currentTurnListener();
-    const roomRef = ref(db, `rooms/${roomId}`);
-    currentTurnListener = onValue(roomRef, (snap) => {
-      if (!snap.exists()) return;
-      const room = snap.val();
-      renderPlayers(room.players || {});
-      renderTable(room.table || {});
-      const ids = Object.keys(room.players || {});
-      if (ids.length > 0 && room.turnIndex !== undefined) {
-        const currentPid = ids[room.turnIndex % ids.length];
-        turnDisplay.textContent = room.players[currentPid]?.name || '-';
-      }
-    });
   };
 
   // ===== 플레이어 렌더 =====
@@ -247,8 +247,8 @@ document.addEventListener('DOMContentLoaded', () => {
     hand.sort((a,b) => a-b).forEach((card, idx) => {
       const d = document.createElement('div'); d.className = 'card bg-white';
       d.innerText = card === 0 ? '광대' : card;
-      d.onclick = async () => {
-        if (!(await isMyTurn())) { alert('내 턴이 아닙니다!'); return; }
+      d.onclick = () => {
+        if (!isMyTurn()) { alert('내 턴이 아닙니다!'); return; }
         if (mySelectedIndices.includes(idx)) {
           mySelectedIndices = mySelectedIndices.filter(i => i !== idx);
           d.classList.remove('selected');
@@ -277,23 +277,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   };
 
-  // ===== 패스/제출 =====
+  // ===== 패스 =====
   passBtn.onclick = async () => {
-    if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
-    if (!(await isMyTurn())) return alert('내 턴이 아닙니다!');
+    if (!isMyTurn()) return alert('내 턴이 아닙니다!');
     await push(ref(db, `rooms/${currentRoomId}/actions`), {type: 'pass', playerId: localPlayerId, ts: Date.now()});
     mySelectedIndices = [];
   };
 
+  // ===== 제출 =====
   submitBtn.onclick = async () => {
-    if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
-    if (!(await isMyTurn())) return alert('내 턴이 아닙니다!');
+    if (!isMyTurn()) return alert('내 턴이 아닙니다!');
     if (mySelectedIndices.length === 0) return alert('카드 선택');
-    await push(ref(db, `rooms/${currentRoomId}/actions`), {type: 'play', playerId: localPlayerId, selectedIndices: mySelectedIndices, ts: Date.now()});
+    await push(ref(db, `rooms/${currentRoomId}/actions`), {
+      type: 'play',
+      playerId: localPlayerId,
+      selectedIndices: mySelectedIndices,
+      ts: Date.now()
+    });
     mySelectedIndices = [];
   };
 
-  // ===== 호스트 액션 처리 =====
+  // ===== 호스트 액션 처리 (첫 턴 허용) =====
   const startHostActionListener = (roomId) => {
     const actionsRef = ref(db, `rooms/${roomId}/actions`);
     onValue(actionsRef, async (snap) => {
@@ -322,6 +326,8 @@ document.addEventListener('DOMContentLoaded', () => {
           const nonWild = played.filter(c => c !== 0);
           let number = nonWild.length ? nonWild[0] : 13;
           if (nonWild.length > 0 && !nonWild.every(c => c === number)) { await remove(child(actionsRef, k)); continue; }
+
+          // 첫 턴 허용: roundCount == null
           const roundCount = room.roundCount;
           const roundNumber = room.roundNumber;
           if (roundCount != null && played.length !== roundCount) { await remove(child(actionsRef, k)); continue; }
@@ -352,7 +358,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   };
 
-  // ===== 알림 =====
   const showMessage = (text) => alert(text);
 });
 </script>
