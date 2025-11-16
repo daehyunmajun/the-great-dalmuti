@@ -1,218 +1,547 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<title>멀티 달무티 P2P</title>
-<script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>달무티 - Firebase 실시간 (MVP)</title>
+
+<!-- Tailwind for quick minimal styling -->
+<script src="https://cdn.tailwindcss.com"></script>
+
 <style>
-body { font-family: Arial; padding: 20px; }
-.cards { margin-top: 10px; }
-.card {
-  display: inline-block;
-  padding: 8px 12px;
-  margin: 4px;
-  background: #eee;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 20px;
-}
-.selected { background: #ffc107; font-weight: bold; }
-#playersInfo, #playerList { margin-top: 15px; }
+  body { background: #f8fafc; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+  .card { width:72px; height:104px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; cursor:pointer; user-select:none; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
+  .card.selected{ outline:4px solid #f97316; transform:translateY(-6px); }
+  .card.disabled{ opacity:0.4; cursor:not-allowed; }
+  .avatar { width:36px; height:36px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-weight:700; background:#eef2ff; }
 </style>
 </head>
-<body>
+<body class="p-4 md:p-8">
 
-<h2>멀티 달무티 P2P</h2>
+<div class="max-w-5xl mx-auto">
+  <header class="mb-6">
+    <h1 class="text-2xl font-extrabold text-sky-700">달무티 (MVP) — Firebase 실시간</h1>
+    <p class="text-sm text-gray-600">간단한 미니멀 UI / GitHub Pages + Firebase Realtime DB</p>
+  </header>
 
-<label>이름: <input type="text" id="playerName" placeholder="Player1"></label>
-<button id="hostBtn">방장 시작</button>
-<button id="joinBtn">방 참가</button>
-<input type="text" id="roomId" placeholder="방 ID">
+  <!-- 설정 / 방 만들기 -->
+  <section class="mb-4 grid gap-3 md:grid-cols-3">
+    <input id="nameInput" placeholder="닉네임" class="p-2 border rounded" />
+    <input id="avatarInput" placeholder="아바타(이모지 또는 이미지 URL)" class="p-2 border rounded" />
+    <div class="flex gap-2">
+      <button id="createBtn" class="px-3 py-2 bg-green-600 text-white rounded">방 생성 (호스트)</button>
+      <input id="roomInput" placeholder="방 ID 입력" class="p-2 border rounded" />
+      <button id="joinBtn" class="px-3 py-2 bg-blue-600 text-white rounded">참가</button>
+    </div>
+  </section>
 
-<h3>접속 플레이어</h3>
-<div id="playerList"></div>
+  <!-- 룸 / 플레이어 정보 -->
+  <section class="mb-6 grid md:grid-cols-3 gap-4">
+    <div class="col-span-1 bg-white p-4 rounded shadow">
+      <h3 class="font-semibold mb-2">방 정보</h3>
+      <p>방 ID: <span id="roomIdDisplay" class="font-mono"></span></p>
+      <p class="mt-2">호스트: <span id="hostDisplay">-</span></p>
+      <p class="mt-2">현재 턴: <span id="turnDisplay">-</span></p>
+      <div class="mt-3">
+        <button id="startGameBtn" class="px-3 py-2 bg-orange-500 text-white rounded">게임 시작 (호스트)</button>
+      </div>
+    </div>
 
-<h3>내 카드</h3>
-<div id="playerCards" class="cards"></div>
-<button onclick="playSelected()">선택 카드 내기</button>
-<button onclick="playerPass()">패스</button>
+    <div class="col-span-2 bg-white p-4 rounded shadow">
+      <h3 class="font-semibold mb-2">플레이어 목록</h3>
+      <div id="playersList" class="flex gap-3 flex-wrap"></div>
+    </div>
+  </section>
 
-<h3>턴 정보</h3>
-<div id="turnInfo"></div>
+  <!-- 보드형 레이아웃 (B) -->
+  <section class="mb-6 bg-white p-4 rounded shadow">
+    <div class="grid grid-cols-12 gap-4 items-center">
+      <!-- 상단 : Player2 -->
+      <div class="col-span-3 text-center" id="p2Area"></div>
 
-<h3>테이블 상태</h3>
-<div id="tableArea"></div>
+      <!-- 가운데 좌측 : Player1 | 중앙 : 내 카드 | 중앙 우측 : Player3 -->
+      <div class="col-span-3 text-center" id="p1Area"></div>
+      <div class="col-span-6 md:col-span-6">
+        <div class="mb-3 flex justify-between items-center">
+          <div><strong>테이블</strong></div>
+          <div>
+            <button id="passBtn" class="px-3 py-2 bg-gray-200 rounded">패스</button>
+            <button id="submitBtn" class="px-3 py-2 bg-amber-500 text-white rounded ml-2">제출</button>
+          </div>
+        </div>
 
-<script>
-// ===== 카드 구성 =====
-const cardCounts = {12:12,11:11,10:10,9:9,8:8,7:7,6:6,5:5,4:4,3:3,2:2,1:1};
-let deck = [];
-for(const [num,count] of Object.entries(cardCounts)){
-  for(let i=0;i<count;i++) deck.push(Number(num));
-}
-deck.push(0,0); // 광대 2장
+        <div class="mb-3" id="tableArea">
+          <!-- 테이블에 제출된 카드 목록 -->
+        </div>
 
-// ===== P2P 세팅 =====
-let peer=null, conn=null, isHost=false, playerId=null, roomId=null;
+        <div class="mt-3">
+          <div class="text-sm text-gray-500 mb-2">내 카드 (클릭하여 여러 장 선택 → 제출)</div>
+          <div id="myHand" class="flex gap-2 flex-wrap"></div>
+        </div>
+      </div>
 
-// 게임 상태
-let gameState = {roundNumber:null, roundCount:null, turnOrder:[], currentTurn:0, players:{}};
-let selectedCards=[];
+      <div class="col-span-3 text-center" id="p3Area"></div>
 
-// ===== UI =====
-function renderPlayerCards(){
-  const area = document.getElementById("playerCards");
-  area.innerHTML="";
-  const hand = gameState.players[playerId]?.hand || [];
-  hand.sort((a,b)=>a-b).forEach((num,idx)=>{
-    const div=document.createElement("div");
-    div.className="card";
-    div.innerText=num===0?"광대":num;
-    div.onclick=()=>{toggleCard(idx);}
-    if(selectedCards.includes(idx)) div.classList.add("selected");
-    area.appendChild(div);
-  });
-  updatePlayerList();
-}
+      <!-- Player4 하단 -->
+      <div class="col-span-12 text-center mt-4" id="p4Area"></div>
+    </div>
+  </section>
 
-function toggleCard(idx){
-  if(selectedCards.includes(idx)) selectedCards=selectedCards.filter(i=>i!==idx);
-  else selectedCards.push(idx);
-  renderPlayerCards();
-}
+  <footer class="text-xs text-gray-500">주의: 이 MVP는 DB만으로 동작하므로 완전한 치트 방지가 되지 않습니다. 빠른 테스트용.</footer>
+</div>
 
-function updatePlayerList(){
-  const listDiv=document.getElementById("playerList");
-  let html=gameState.turnOrder.map(pid=>gameState.players[pid].name).join("<br>");
-  listDiv.innerHTML=html;
-}
+<!-- Firebase libs (modular) -->
+<script type="module">
+/* ====== 설정할 것 (너의 Firebase 프로젝트 config) ======
+   반드시 본인 Firebase 콘솔에서 Realtime DB URL 과 API 키 등으로 교체하세요.
+*/
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import {
+  getDatabase, ref, set, push, onValue, update, get, child, remove
+} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
 
-function updateTurnInfo(){
-  const info=document.getElementById("turnInfo");
-  if(gameState.turnOrder.length===0) info.innerText="대기 중";
-  else{
-    const pid=gameState.turnOrder[gameState.currentTurn];
-    info.innerText=`턴: ${gameState.players[pid].name}`;
+/* --- 여기를 네 프로젝트 정보로 바꿔라 --- */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "SENDER_ID",
+  appId: "APP_ID"
+};
+/* ----------------------------------------------------- */
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// ===== DOM =====
+const nameInput = document.getElementById('nameInput');
+const avatarInput = document.getElementById('avatarInput');
+const createBtn = document.getElementById('createBtn');
+const joinBtn = document.getElementById('joinBtn');
+const roomInput = document.getElementById('roomInput');
+const roomIdDisplay = document.getElementById('roomIdDisplay');
+const hostDisplay = document.getElementById('hostDisplay');
+const playersList = document.getElementById('playersList');
+const startGameBtn = document.getElementById('startGameBtn');
+
+const turnDisplay = document.getElementById('turnDisplay');
+const myHandDiv = document.getElementById('myHand');
+const tableArea = document.getElementById('tableArea');
+const passBtn = document.getElementById('passBtn');
+const submitBtn = document.getElementById('submitBtn');
+
+const p1Area = document.getElementById('p1Area');
+const p2Area = document.getElementById('p2Area');
+const p3Area = document.getElementById('p3Area');
+const p4Area = document.getElementById('p4Area');
+
+// ===== 앱 상태 =====
+let localPlayerId = null;
+let localName = null;
+let localAvatar = null;
+let currentRoomId = null;
+let isHost = false;
+
+// ===== 카드덱 생성 (12..1 각 숫자 장수 + 광대 2장) =====
+function makeDeck(){
+  const counts = {12:12,11:11,10:10,9:9,8:8,7:7,6:6,5:5,4:4,3:3,2:2,1:1};
+  const deck = [];
+  for(const [n,c] of Object.entries(counts)){
+    for(let i=0;i<c;i++) deck.push(Number(n));
   }
+  deck.push(0,0); // 광대
+  return deck;
 }
 
-function updateTableArea(msg){
-  document.getElementById("tableArea").innerText=msg;
-}
+// ===== 방 생성 =====
+createBtn.onclick = async () => {
+  localName = (nameInput.value || 'Host').slice(0,16);
+  localAvatar = (avatarInput.value || '👑').slice(0,64);
+  localPlayerId = 'P' + Math.floor(Math.random()*1000000);
+  isHost = true;
 
-// ===== 카드 내기 =====
-function playSelected(){
-  if(!selectedCards.length) return alert("카드를 선택하세요");
-  const hand = gameState.players[playerId].hand;
-  let cards = selectedCards.map(i=>hand[i]);
-  let normal = cards.filter(x=>x!==0);
-  let number = normal.length?normal[0]:0;
+  // 방 ID: 간단 랜덤 6글자
+  const roomId = Math.random().toString(36).slice(2,8).toUpperCase();
+  currentRoomId = roomId;
+  roomIdDisplay.textContent = roomId;
 
-  if(gameState.roundCount!==null){
-    if(cards.length!==gameState.roundCount) return alert(`${gameState.roundCount}장만 낼 수 있습니다`);
-    if(number>=gameState.roundNumber) return alert(`${gameState.roundNumber}보다 낮아야 합니다`);
-    if(!normal.every(n=>n===number)) return alert("같은 숫자 카드만 낼 수 있습니다(광대 허용)");
-  }
-
-  selectedCards.sort((a,b)=>b-a).forEach(i=>hand.splice(i,1));
-  selectedCards=[];
-
-  gameState.roundNumber=number;
-  gameState.roundCount=cards.length;
-  updateTurnInfo();
-  updateTableArea(`${gameState.players[playerId].name}: ${cards.length}장 (${number===0?"광대 포함":number})`);
-
-  if(isHost) broadcastGameState();
-  nextTurn();
-  renderPlayerCards();
-}
-
-function playerPass(){
-  updateTableArea(`${gameState.players[playerId].name} 패스`);
-  nextTurn();
-}
-
-function nextTurn(){
-  gameState.currentTurn=(gameState.currentTurn+1)%gameState.turnOrder.length;
-  updateTurnInfo();
-  renderPlayerCards();
-  if(isHost) broadcastGameState();
-}
-
-// ===== Host/Join =====
-document.getElementById("hostBtn").onclick=()=>{
-  playerId="P"+Math.floor(Math.random()*10000);
-  isHost=true;
-  peer=new Peer(playerId);
-  peer.on('open', id=>{
-    roomId=id;
-    alert(`방장 생성 완료, 방 ID: ${roomId}`);
-    setupHost();
+  // 초기 방 구조
+  const roomRef = ref(db, `rooms/${roomId}`);
+  await set(roomRef, {
+    host: localPlayerId,
+    turnIndex: 0,
+    roundNumber: null,
+    roundCount: null,
+    table: {},
+    createdAt: Date.now()
   });
+
+  // 참가자 등록
+  const playersRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
+  await set(playersRef, { name: localName, avatar: localAvatar, hand: [] });
+
+  hostDisplay.textContent = localName + " (You)";
+  listenRoom(roomId);
+  showMessage(`방 생성됨: ${roomId} (호스트)`);
 };
 
-document.getElementById("joinBtn").onclick=()=>{
-  const name=document.getElementById("playerName").value||"Player";
-  playerId="P"+Math.floor(Math.random()*10000);
-  roomId=document.getElementById("roomId").value;
-  if(!roomId) return alert("방 ID 필요");
-  peer=new Peer(playerId);
-  peer.on('open',id=>{
-    conn=peer.connect(roomId);
-    conn.on('open',()=>{conn.send({type:"join",name:name,id:playerId});});
-    conn.on('data',handleData);
-  });
+// ===== 방 참가 =====
+joinBtn.onclick = async () => {
+  const roomId = (roomInput.value || '').trim().toUpperCase();
+  if(!roomId){ alert('방 ID를 입력하세요'); return; }
+  localName = (nameInput.value || 'Player').slice(0,16);
+  localAvatar = (avatarInput.value || '🙂').slice(0,64);
+  localPlayerId = 'P' + Math.floor(Math.random()*1000000);
+  isHost = false;
+  currentRoomId = roomId;
+
+  // 존재 여부 확인
+  const snapshot = await get(ref(db, `rooms/${roomId}`));
+  if(!snapshot.exists()){ alert('해당 방이 없습니다'); return; }
+
+  // 참가자 등록
+  const playersRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
+  await set(playersRef, { name: localName, avatar: localAvatar, hand: [] });
+
+  roomIdDisplay.textContent = roomId;
+  hostDisplay.textContent = '(joining...)';
+  listenRoom(roomId);
+  showMessage(`방 가입 요청 전송: ${roomId}`);
 };
 
-// ===== Host 세팅 =====
-function setupHost(){
-  const name=document.getElementById("playerName").value||"Host";
-  gameState.players[playerId]={name:name,hand:[],pass:false};
-  gameState.turnOrder.push(playerId);
-  peer.on('connection',c=>{c.on('data',d=>handleDataFromPlayer(d,c));});
-  distributeCards();
-  updateTurnInfo();
-  renderPlayerCards();
-  broadcastGameState();
-}
+// ===== 호스트가 게임 시작 (카드 분배) =====
+startGameBtn.onclick = async () => {
+  if(!currentRoomId) return alert('방에 먼저 입장하세요');
+  const r = await get(ref(db, `rooms/${currentRoomId}`));
+  if(!r.exists()) return alert('방 정보 없음');
+  const room = r.val();
+  if(room.host !== localPlayerId) return alert('호스트만 게임 시작 가능');
 
-// ===== 카드 분배 (접속 인원 기준) =====
-function distributeCards(){
-  const ids=gameState.turnOrder;
-  const shuffled=[...deck].sort(()=>Math.random()-0.5);
-  const perPlayer=Math.floor(shuffled.length/ids.length);
-  for(let i=0;i<ids.length;i++){
-    const pid=ids[i];
-    gameState.players[pid].hand=shuffled.slice(i*perPlayer,(i+1)*perPlayer);
+  const playersSnap = await get(ref(db, `rooms/${currentRoomId}/players`));
+  const players = playersSnap.exists() ? Object.keys(playersSnap.val()) : [];
+  if(players.length === 0) return alert('참가자가 없습니다');
+
+  // 카드 분배 — 한 장씩 순환 분배 (낭비 카드 없음)
+  const deck = makeDeck().sort(()=>Math.random()-0.5);
+  const hands = {};
+  players.forEach(pid => hands[pid] = []);
+  let idx = 0;
+  deck.forEach(card => {
+    const pid = players[idx];
+    hands[pid].push(card);
+    idx = (idx + 1) % players.length;
+  });
+
+  // DB 업데이트: 각 플레이어의 hand 넣기
+  const updates = {};
+  for(const pid of players){
+    updates[`rooms/${currentRoomId}/players/${pid}/hand`] = hands[pid];
   }
-}
+  updates[`rooms/${currentRoomId}/turnIndex`] = 0;
+  updates[`rooms/${currentRoomId}/roundNumber`] = null;
+  updates[`rooms/${currentRoomId}/roundCount`] = null;
+  updates[`rooms/${currentRoomId}/table`] = {};
+  await update(ref(db), updates);
 
-// ===== 데이터 처리 =====
-function handleData(d){
-  if(d.type==="gameState") gameState=d.state;
-  updateTurnInfo();
-  renderPlayerCards();
-}
+  showMessage('카드 분배 완료 — 게임 시작');
+};
 
-function handleDataFromPlayer(d,conn){
-  if(d.type==="join"){
-    const pid=d.id;
-    gameState.players[pid]={name:d.name,hand:[],pass:false};
-    gameState.turnOrder.push(pid);
-    distributeCards();
-    updatePlayerList();
-    conn.send({type:"gameState",state:gameState});
-    broadcastGameState();
-  }
-}
+// ===== 룸 리스너 (모든 참가자가 구독) =====
+function listenRoom(roomId){
+  const roomRef = ref(db, `rooms/${roomId}`);
+  onValue(roomRef, (snap) => {
+    if(!snap.exists()) { showMessage('방이 삭제되었거나 존재하지 않습니다', false); return; }
+    const room = snap.val();
 
-function broadcastGameState(){
-  for(const c in peer.connections){
-    for(const con of peer.connections[c]){
-      con.send({type:"gameState",state:gameState});
+    // 표시
+    roomIdDisplay.textContent = roomId;
+    turnDisplay.textContent = room.turnIndex !== undefined ? room.turnIndex : '-';
+    // host
+    if(room.host){
+      get(ref(db, `rooms/${roomId}/players/${room.host}`)).then(s => {
+        hostDisplay.textContent = s.exists() ? (s.val().name + (room.host === localPlayerId ? ' (You)' : '')) : '호스트';
+      });
     }
+
+    // players 표시 (원본 snapshot)
+    get(ref(db, `rooms/${roomId}/players`)).then(snapPlayers => {
+      const playersObj = snapPlayers.exists() ? snapPlayers.val() : {};
+      renderPlayers(playersObj, room);
+    });
+
+    // table
+    const table = room.table || {};
+    renderTable(table);
+  });
+}
+
+// ===== 렌더 플레이어 UI (아바타 포함) =====
+function renderPlayers(playersObj, room){
+  playersList.innerHTML = '';
+  // build order array from room.turnIndex rotation
+  const ids = Object.keys(playersObj || {});
+  // display avatars and small info
+  ids.forEach(pid => {
+    const p = playersObj[pid];
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2 p-2 bg-slate-50 rounded';
+    const ava = document.createElement('div');
+    ava.className = 'avatar';
+    ava.textContent = p.avatar || '🙂';
+    const txt = document.createElement('div');
+    txt.innerHTML = `<div class="text-sm font-semibold">${p.name}</div><div class="text-xs text-gray-500">${(p.hand||[]).length}장</div>`;
+    if(pid === localPlayerId) txt.innerHTML += '<div class="text-xs text-amber-500"> (You)</div>';
+    div.appendChild(ava); div.appendChild(txt);
+    playersList.appendChild(div);
+  });
+
+  // map players to seat areas (best-effort: up to 4 players)
+  const seatIds = Object.keys(playersObj || {});
+  document.getElementById('p1Area').innerHTML = seatIds[0] ? seatHtml(seatIds[0], playersObj[seatIds[0]], room.host) : '';
+  document.getElementById('p2Area').innerHTML = seatIds[1] ? seatHtml(seatIds[1], playersObj[seatIds[1]], room.host) : '';
+  document.getElementById('p3Area').innerHTML = seatIds[2] ? seatHtml(seatIds[2], playersObj[seatIds[2]], room.host) : '';
+  document.getElementById('p4Area').innerHTML = seatIds[3] ? seatHtml(seatIds[3], playersObj[seatIds[3]], room.host) : '';
+
+  // render my hand (only client shows my actual cards)
+  const myHand = (playersObj[localPlayerId] && playersObj[localPlayerId].hand) ? playersObj[localPlayerId].hand.slice() : [];
+  renderMyHand(myHand, room);
+  // turn display as name
+  if(room && room.turnIndex !== undefined){
+    const idsOrder = Object.keys(playersObj || {});
+    const ti = room.turnIndex % idsOrder.length;
+    const currentPid = idsOrder[ti];
+    turnDisplay.textContent = playersObj[currentPid] ? playersObj[currentPid].name : '-';
   }
 }
+
+function seatHtml(pid, p, hostId){
+  return `<div class="text-sm"><div class="avatar inline-block mr-2">${p.avatar||'🙂'}</div><div class="font-semibold">${p.name}${pid===hostId? ' (H)':''}</div><div class="text-xs text-gray-500">${(p.hand||[]).length}장</div></div>`;
+}
+
+// ===== 내 카드 렌더 & 선택 로직 =====
+let mySelectedIndices = [];
+function renderMyHand(hand, room){
+  myHandDiv.innerHTML = '';
+  hand.sort((a,b)=>a-b).forEach((card, idx) => {
+    const d = document.createElement('div');
+    d.className = 'card bg-white';
+    d.innerText = card === 0 ? '광대' : card;
+    // disabled if not my turn
+    if(!room || room.turnIndex === undefined) d.classList.add('disabled');
+    // check if it's my turn by mapping order
+    const playersObj = room ? (room.players || {}) : {};
+    // find index in order
+    // We'll assume players order is the DB players list order
+    // Enable click always but submission will be validated by host.
+    d.onclick = () => {
+      // toggle selection by index position in current hand snapshot
+      if(mySelectedIndices.includes(idx)){
+        mySelectedIndices = mySelectedIndices.filter(i=>i!==idx);
+        d.classList.remove('selected');
+      } else {
+        mySelectedIndices.push(idx);
+        d.classList.add('selected');
+      }
+    };
+    myHandDiv.appendChild(d);
+  });
+}
+
+// ===== 테이블 렌더 (누가 무엇을 냈는지 간단히) =====
+function renderTable(tbl){
+  tableArea.innerHTML = '';
+  const entries = Object.entries(tbl || {});
+  if(entries.length === 0){ tableArea.innerHTML = '<div class="text-sm text-gray-500">아직 제출된 카드가 없습니다.</div>'; return; }
+  entries.forEach(([pid, cards]) => {
+    const node = document.createElement('div');
+    node.className = 'mb-2';
+    node.innerHTML = `<div class="text-xs text-gray-500">${pid}</div><div class="flex gap-2 mt-1">${cards.map(c=>`<div class="card bg-slate-50">${c===0?'광대':c}</div>`).join('')}</div>`;
+    tableArea.appendChild(node);
+  });
+}
+
+/* ===== 액션: 패스 / 제출 (클라이언트는 요청만 함) ===== */
+passBtn.onclick = async () => {
+  if(!currentRoomId || !localPlayerId) return alert('방 참가 후 이용하세요');
+  // push action request
+  await push(ref(db, `rooms/${currentRoomId}/actions`), {
+    type: 'pass',
+    playerId: localPlayerId,
+    ts: Date.now()
+  });
+  mySelectedIndices = [];
+};
+
+submitBtn.onclick = async () => {
+  if(!currentRoomId || !localPlayerId) return alert('방 참가 후 이용하세요');
+  if(mySelectedIndices.length === 0) return alert('제출할 카드를 선택하세요');
+  // push action request to actions queue
+  await push(ref(db, `rooms/${currentRoomId}/actions`), {
+    type: 'play',
+    playerId: localPlayerId,
+    selectedIndices: mySelectedIndices,
+    ts: Date.now()
+  });
+  mySelectedIndices = [];
+};
+
+/* ======= HOST: 액션 큐 감시 및 처리 =====
+   호스트 클라이언트만 actions 노드의 child 추가를 감시하여 처리함.
+*/
+function startHostActionListener(roomId){
+  const actionsRef = ref(db, `rooms/${roomId}/actions`);
+  onValue(actionsRef, async (snap) => {
+    if(!isHost) return; // 오직 호스트만 처리
+    if(!snap.exists()) return;
+    const actions = snap.val(); // object
+    // process each action in insertion order (push key sorted)
+    const keys = Object.keys(actions).sort();
+    for(const k of keys){
+      const a = actions[k];
+      // only process if not already processed (we will remove after processing)
+      // re-read room & players for safe state
+      const roomSnap = await get(ref(db, `rooms/${roomId}`));
+      if(!roomSnap.exists()) continue;
+      const room = roomSnap.val();
+      const playersSnap = await get(ref(db, `rooms/${roomId}/players`));
+      const playersObj = playersSnap.exists() ? playersSnap.val() : {};
+      // validate turn
+      const order = Object.keys(playersObj || {});
+      if(order.length === 0) { await remove(child(actionsRef, k)); continue; }
+      const expectedPid = order[room.turnIndex % order.length];
+      if(a.playerId !== expectedPid){
+        // ignore or notify - remove action to avoid infinite loop
+        console.warn('Action from not-current-turn player', a.playerId, 'expected', expectedPid);
+        await remove(child(actionsRef, k));
+        continue;
+      }
+
+      if(a.type === 'pass'){
+        // advance turn
+        const newIndex = ((room.turnIndex || 0) + 1) % order.length;
+        await update(ref(db, `rooms/${roomId}`), { turnIndex: newIndex });
+        // remove action
+        await remove(child(actionsRef, k));
+      } else if(a.type === 'play'){
+        // process play: remove selectedIndices from player's hand (careful with indices)
+        const pid = a.playerId;
+        const playerHandSnap = await get(ref(db, `rooms/${roomId}/players/${pid}/hand`));
+        const hand = playerHandSnap.exists() ? playerHandSnap.val() : [];
+        // validate indices are within bounds
+        const sel = (a.selectedIndices || []).slice().sort((x,y)=>y-x); // descending
+        if(!sel.every(i => Number.isInteger(i) && i >=0 && i < hand.length)){
+          console.warn('Invalid indices, cancel', sel);
+          await remove(child(actionsRef, k));
+          continue;
+        }
+        // collect cards
+        const playedCards = sel.map(i => hand[i]);
+        // validation: same-number (ignoring 0 wildcards)
+        const nonWild = playedCards.filter(c=>c!==0);
+        let number = nonWild.length ? nonWild[0] : 0;
+        if(nonWild.length > 0 && !nonWild.every(c=>c===number)){
+          console.warn('Invalid set (not same number)', playedCards);
+          await remove(child(actionsRef, k));
+          continue;
+        }
+        // if room.roundCount exists, must match count and number lower than roundNumber
+        const roundCount = room.roundCount;
+        const roundNumber = room.roundNumber;
+        if(roundCount !== null && roundCount !== undefined){
+          if(playedCards.length !== roundCount){
+            console.warn('Wrong count');
+            await remove(child(actionsRef, k));
+            continue;
+          }
+          if(number >= (roundNumber||0) && number !== 0){
+            console.warn('Not lower number');
+            await remove(child(actionsRef, k));
+            continue;
+          }
+        }
+        // all ok: remove cards from hand
+        const newHand = hand.slice();
+        sel.forEach(i=>{
+          newHand.splice(i,1);
+        });
+        // write new hand and update table and round info
+        const updates = {};
+        updates[`rooms/${roomId}/players/${pid}/hand`] = newHand;
+        updates[`rooms/${roomId}/table/${pid}`] = playedCards;
+        updates[`rooms/${roomId}/roundCount`] = playedCards.length;
+        updates[`rooms/${roomId}/roundNumber`] = number;
+        // advance turn
+        const newIndex = ((room.turnIndex || 0) + 1) % order.length;
+        updates[`rooms/${roomId}/turnIndex`] = newIndex;
+        await update(ref(db), updates);
+        // remove action
+        await remove(child(actionsRef, k));
+      } else {
+        await remove(child(actionsRef, k));
+      }
+    }
+  });
+}
+
+/* ==== 초기: actions listener (host only) ====
+   We'll trigger this when we detect that local client is host for that room.
+*/
+onValue(ref(db), snap => {
+  // noop global listener repurposed - we prefer starting per-room when host sets up
+});
+
+// ===== utility showMessage =====
+function showMessage(text, ok=true){
+  alert(text);
+}
+
+// ===== when joined room, also start host listener if host =====
+/* We'll set a room-specific watcher to detect if we're host and start listener */
+function attachRoomMetaWatcher(roomId){
+  const metaRef = ref(db, `rooms/${roomId}/host`);
+  onValue(metaRef, snap => {
+    const h = snap.val();
+    if(h === localPlayerId){
+      isHost = true;
+      startHostActionListener(roomId);
+    } else {
+      isHost = false;
+    }
+  });
+}
+
+// When joining or creating, call attachRoomMetaWatcher + listenRoom was called in create/join flow
+// To ensure attach, we watch rooms/{roomId}/host on join/create flows:
+
+// Hook: after create or join we already call listenRoom(); add attachRoomMetaWatcher
+// modify existing create/join handlers to call attachRoomMetaWatcher(currentRoomId)
+// We already call listenRoom above, so patch calls here:
+
+// Small patch: observe rooms list to detect when this client becomes host
+onValue(ref(db, 'rooms'), snap => {
+  // noop - just to keep connection alive; no heavy logic here
+});
+
+// Note: For simplicity, when creating room we already set host to localPlayerId and call listenRoom.
+// For join, after successful set of player, call attachRoomMetaWatcher:
+async function postJoinSetup(){
+  if(currentRoomId) attachRoomMetaWatcher(currentRoomId);
+}
+window.addEventListener('load', ()=> {
+  // wire up minimal: if user already joined via UI, attachRoomMetaWatcher was called in flow (create/join handlers)
+});
+
+// patch create/join to call attachRoomMetaWatcher
+// (re-bind with safer functions)
+createBtn.addEventListener('click', () => {
+  // current implementation already creates room and calls listenRoom; wait a tick then attach
+  setTimeout(()=> { if(currentRoomId) attachRoomMetaWatcher(currentRoomId); }, 800);
+});
+joinBtn.addEventListener('click', () => {
+  setTimeout(()=> { if(currentRoomId) attachRoomMetaWatcher(currentRoomId); }, 800);
+});
 </script>
 </body>
 </html>
