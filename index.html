@@ -177,35 +177,38 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // ===== 방 생성 =====
-  createBtn.onclick = async () => {
-    console.log('디버그: 방 생성 버튼 클릭');
-    const name = (nameInput.value || 'Host').slice(0,16);
-    const avatar = (avatarInput.value || '👑').slice(0,64);
-    localPlayerId = 'P' + Math.floor(Math.random()*1e6);
-    isHost = true;
-    const roomId = Math.random().toString(36).slice(2,8).toUpperCase();
-    currentRoomId = roomId;
-    roomIdDisplay.textContent = roomId;
+createBtn.onclick = async () => {
+  console.log('디버그: 방 생성 버튼 클릭');
+  const name = (nameInput.value || 'Host').slice(0,16);
+  const avatar = (avatarInput.value || 'Crown').slice(0,64);
+  localPlayerId = 'P' + Math.floor(Math.random()*1e6);
+  isHost = true;
+  const roomId = Math.random().toString(36).slice(2,8).toUpperCase();
+  currentRoomId = roomId;
+  roomIdDisplay.textContent = roomId;
 
-    try {
-      const roomRef = ref(db, `rooms/${roomId}`);
-      await set(roomRef, {host: localPlayerId, turnIndex: 0, roundNumber: null, roundCount: null, table: {}, createdAt: Date.now()});
-      console.log('디버그: room 생성 성공');
+  try {
+    const roomRef = ref(db, `rooms/${roomId}`);
+    await set(roomRef, {host: localPlayerId, turnIndex: 0, roundNumber: null, roundCount: null, table: {}, createdAt: Date.now()});
+    console.log('디버그: room 생성 성공');
 
-      const playerRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
-      await set(playerRef, {name, avatar, hand: [], connected: true});
-      onDisconnect(playerRef).remove();
-      console.log('디버그: 플레이어 추가 성공');
+    const playerRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
+    await set(playerRef, {name, avatar, hand: [], connected: true});
+    onDisconnect(playerRef).remove();
+    console.log('디버그: 플레이어 추가 성공');
 
-      hostDisplay.textContent = `${name} (You)`;
-      listenRoom(roomId);
-      attachHostWatcher(roomId);
-      showMessage(`방 생성됨: ${roomId} (호스트)`);
-    } catch (e) {
-      console.error('디버그: 방 생성 에러:', e);
-      alert('방 생성 실패: ' + e.message);
-    }
-  };
+    hostDisplay.textContent = `${name} (You)`;
+    listenRoom(roomId);
+    
+    // 이 줄이 빠져 있었음! 호스트 감지 강제 시작
+    attachHostWatcher(roomId);
+    
+    showMessage(`방 생성됨: ${roomId} (호스트)`);
+  } catch (e) {
+    console.error('디버그: 방 생성 에러:', e);
+    alert('방 생성 실패: ' + e.message);
+  }
+};
 
   // ===== 방 참가 =====
   joinBtn.onclick = async () => {
