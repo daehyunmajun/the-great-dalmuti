@@ -330,17 +330,32 @@ document.addEventListener('DOMContentLoaded', () => {
           const played = sel.map(i=>hand[i]);
           const nonWild = played.filter(c=>c!==0);
           const number = nonWild.length > 0 ? nonWild[0] : 13;
-
+        
+          // 같은 숫자 체크
           if (nonWild.length > 0 && !nonWild.every(c=>c===number)) {
-            await remove(child(actionsRef, k)); continue;
+            console.log('검증 실패: 같은 숫자 아님');
+            await remove(child(actionsRef, k)); 
+            continue;
           }
-
+        
           const rc = room.roundCount;
           const rn = room.roundNumber;
-          if (rc !== null && played.length !== rc) { await remove(child(actionsRef, k)); continue; }
-          if (rn !== null && number >= rn) { await remove(child(actionsRef, k)); continue; }
-
-          const newHand = hand.slice(); sel.forEach(i=>newHand.splice(i,1));
+        
+          // 첫 턴은 장수 자유 (rc === null)
+          if (rc !== null && played.length !== rc) {
+            console.log('검증 실패: 장수 불일치');
+            await remove(child(actionsRef, k)); 
+            continue;
+          }
+          if (rn !== null && number >= rn) {
+            console.log('검증 실패: 숫자 높음');
+            await remove(child(actionsRef, k)); 
+            continue;
+          }
+        
+          // 성공 처리
+          const newHand = hand.slice(); 
+          sel.forEach(i=>newHand.splice(i,1));
           const updates = {};
           updates[`rooms/${roomId}/players/${a.playerId}/hand`] = newHand;
           updates[`rooms/${roomId}/table/${a.playerId}`] = played;
@@ -348,8 +363,7 @@ document.addEventListener('DOMContentLoaded', () => {
           updates[`rooms/${roomId}/roundNumber`] = number;
           updates[`rooms/${roomId}/turnIndex`] = (room.turnIndex + 1) % players.length;
           await update(ref(db), updates);
-          await remove(child(actionsRef, k));
-        } else {
+          console.log('제출 성공! 테이블 업데이트');
           await remove(child(actionsRef, k));
         }
       }
