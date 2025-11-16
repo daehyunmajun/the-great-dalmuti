@@ -80,7 +80,9 @@
 <!-- ===== Firebase + 게임 로직 ===== -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-import { getDatabase, ref, set, update, get, onValue, push, child, remove, onDisconnect, off } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
+import { 
+  getDatabase, ref, set, update, get, onValue, push, child, remove, onDisconnect 
+} from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyB6ktKQxiTzvbCHgaB2gd75_DmXHF5bApw",
@@ -94,287 +96,42 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// 전역에 노출 (콘솔에서 사용 가능)
+window.db = db;
+window.getDatabase = getDatabase;
+window.app = app;
+
+// ===== 나머지 기존 코드 그대로 (아래 붙여넣기) =====
+// (너가 이미 가지고 있는 DOM, 상태, 함수들 전부 그대로 복사해서 여기에 붙여넣기)
+// 예: nameInput, createBtn, renderMyHand, submitBtn 등
 
 document.addEventListener('DOMContentLoaded', () => {
-  const db = getDatabase(app);
+  // ... (너의 기존 코드 전체 붙여넣기)
+  // 단, attachHostWatcher 안에 아래처럼 수정!
 
-  // ===== DOM 요소 =====
-  const nameInput = document.getElementById('nameInput');
-  const avatarInput = document.getElementById('avatarInput');
-  const createBtn = document.getElementById('createBtn');
-  const joinBtn = document.getElementById('joinBtn');
-  const roomInput = document.getElementById('roomInput');
-  const roomIdDisplay = document.getElementById('roomIdDisplay');
-  const hostDisplay = document.getElementById('hostDisplay');
-  const playersList = document.getElementById('playersList');
-  const startGameBtn = document.getElementById('startGameBtn');
-  const turnDisplay = document.getElementById('turnDisplay');
-  const myHandDiv = document.getElementById('myHand');
-  const tableArea = document.getElementById('tableArea');
-  const passBtn = document.getElementById('passBtn');
-  const submitBtn = document.getElementById('submitBtn');
-  const playerAreas = document.getElementById('playerAreas');
-
-  // ===== 상태 =====
-  let localPlayerId = null;
-  let currentRoomId = null;
-  let isHost = false;
-  let mySelectedIndices = [];
-  let roomData = null; // 실시간 데이터 캐시
-  let roomListener = null;
-
-  // ===== 실시간 리스너 =====
-  const listenRoom = (roomId) => {
-    console.log('디버그: listenRoom 호출 - roomId:', roomId);
-    if (roomListener) roomListener();
-    const roomRef = ref(db, `rooms/${roomId}`);
-    roomListener = onValue(roomRef, (snap) => {
-      if (!snap.exists()) {
-        console.log('디버그: room 없음');
-        return;
+  // ===== 호스트 감지 (강화 버전) =====
+  const attachHostWatcher = (roomId) => {
+    const hostRef = ref(db, `rooms/${roomId}/host`);
+    onValue(hostRef, (snap) => {
+      isHost = snap.val() === localPlayerId;
+      console.log('호스트 감지:', isHost ? '내가 호스트' : '호스트 아님');
+      if (isHost && !window.hostListenerStarted) {
+        window.hostListenerStarted = true;
+        startHostActionListener(roomId);
       }
-      roomData = snap.val();
-      console.log('디버그: roomData 업데이트:', roomData);
-      renderPlayers(roomData.players || {});
-      renderTable(roomData.table || {});
-      updateTurnDisplay();
     });
   };
 
-  const updateTurnDisplay = () => {
-    if (!roomData || !roomData.players) return;
-    const ids = Object.keys(roomData.players);
-    if (ids.length === 0 || roomData.turnIndex === undefined) return;
-    const currentPid = ids[roomData.turnIndex % ids.length];
-    turnDisplay.textContent = roomData.players[currentPid]?.name || '-';
-    console.log('디버그: 현재 턴:', turnDisplay.textContent);
-  };
-
-  // ===== 내 턴 체크 =====
-  const isMyTurn = () => {
-    if (!roomData || !localPlayerId) {
-      console.log('디버그: isMyTurn false - roomData/localPlayerId 없음');
-      return false;
-    }
-    const ids = Object.keys(roomData.players);
-    if (ids.length === 0) {
-      console.log('디버그: isMyTurn false - 플레이어 없음');
-      return false;
-    }
-    const currentPid = ids[roomData.turnIndex % ids.length];
-    const myTurn = currentPid === localPlayerId;
-    console.log('디버그: isMyTurn 체크 - myTurn:', myTurn, 'currentPid:', currentPid, 'localPlayerId:', localPlayerId);
-    return myTurn;
-  };
-
-  // ===== 덱 생성 =====
-  const makeDeck = () => {
-    const counts = {12:12,11:11,10:10,9:9,8:8,7:7,6:6,5:5,4:4,3:3,2:2,1:1};
-    const deck = [];
-    for (const [n,c] of Object.entries(counts)) for (let i=0; i<c; i++) deck.push(Number(n));
-    deck.push(0,0);
-    return deck;
-  };
-
-  // ===== 방 생성 =====
-createBtn.onclick = async () => {
-  console.log('디버그: 방 생성 버튼 클릭');
-  const name = (nameInput.value || 'Host').slice(0,16);
-  const avatar = (avatarInput.value || 'Crown').slice(0,64);
-  localPlayerId = 'P' + Math.floor(Math.random()*1e6);
-  isHost = true;
-  const roomId = Math.random().toString(36).slice(2,8).toUpperCase();
-  currentRoomId = roomId;
-  roomIdDisplay.textContent = roomId;
-
-  try {
-    const roomRef = ref(db, `rooms/${roomId}`);
-    await set(roomRef, {host: localPlayerId, turnIndex: 0, roundNumber: null, roundCount: null, table: {}, createdAt: Date.now()});
-    console.log('디버그: room 생성 성공');
-
-    const playerRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
-    await set(playerRef, {name, avatar, hand: [], connected: true});
-    onDisconnect(playerRef).remove();
-    console.log('디버그: 플레이어 추가 성공');
-
-    hostDisplay.textContent = `${name} (You)`;
-    listenRoom(roomId);
-    
-    // 이 줄이 빠져 있었음! 호스트 감지 강제 시작
-    attachHostWatcher(roomId);
-    
-    showMessage(`방 생성됨: ${roomId} (호스트)`);
-  } catch (e) {
-    console.error('디버그: 방 생성 에러:', e);
-    alert('방 생성 실패: ' + e.message);
-  }
-};
-
-  // ===== 방 참가 =====
-  joinBtn.onclick = async () => {
-    console.log('디버그: 참가 버튼 클릭');
-    const roomId = (roomInput.value || '').trim().toUpperCase();
-    if (!roomId) return alert('방 ID 입력');
-
-    const name = (nameInput.value || 'Player').slice(0,16);
-    const avatar = (avatarInput.value || '🙂').slice(0,64);
-    localPlayerId = 'P' + Math.floor(Math.random()*1e6);
-    isHost = false;
-    currentRoomId = roomId;
-
-    try {
-      const snap = await get(ref(db, `rooms/${roomId}`));
-      if (!snap.exists()) return alert('해당 방 없음');
-
-      const playerRef = ref(db, `rooms/${roomId}/players/${localPlayerId}`);
-      await set(playerRef, {name, avatar, hand: [], connected: true});
-      onDisconnect(playerRef).remove();
-      console.log('디버그: 참가 성공');
-
-      roomIdDisplay.textContent = roomId;
-      listenRoom(roomId);
-      attachHostWatcher(roomId);
-      showMessage(`방 참가: ${roomId}`);
-    } catch (e) {
-      console.error('디버그: 참가 에러:', e);
-      alert('참가 실패: ' + e.message);
-    }
-  };
-
-  // ===== 게임 시작 =====
-  startGameBtn.onclick = async () => {
-    console.log('디버그: 게임 시작 버튼 클릭');
-    if (!isHost || !currentRoomId) return alert('호스트만 시작 가능');
-
-    try {
-      const snap = await get(ref(db, `rooms/${currentRoomId}/players`));
-      const players = snap.exists() ? Object.keys(snap.val()) : [];
-      if (players.length < 2) return alert('2명 이상 필요');
-
-      const deck = makeDeck().sort(() => Math.random() - 0.5);
-      const hands = {}; players.forEach(p => hands[p] = []);
-      let i = 0; deck.forEach(c => { hands[players[i]].push(c); i = (i+1)%players.length; });
-
-      const updates = {};
-      players.forEach(p => updates[`rooms/${currentRoomId}/players/${p}/hand`] = hands[p]);
-      updates[`rooms/${currentRoomId}/turnIndex`] = 0;
-      updates[`rooms/${currentRoomId}/roundNumber`] = null;
-      updates[`rooms/${currentRoomId}/roundCount`] = null;
-      updates[`rooms/${currentRoomId}/table`] = {};
-      await update(ref(db), updates);
-      console.log('디버그: 분배 성공');
-      showMessage('카드 분배 완료');
-    } catch (e) {
-      console.error('디버그: 게임 시작 에러:', e);
-      alert('게임 시작 실패: ' + e.message);
-    }
-  };
-
-  // ===== 플레이어 렌더 =====
-  const renderPlayers = (playersObj) => {
-    console.log('디버그: renderPlayers 호출 - 플레이어 수:', Object.keys(playersObj).length);
-    playersList.innerHTML = ''; playerAreas.innerHTML = '';
-    const ids = Object.keys(playersObj);
-    ids.forEach(pid => {
-      const p = playersObj[pid];
-      const div = document.createElement('div');
-      div.className = `flex items-center gap-2 p-2 rounded ${p.connected ? 'bg-emerald-50' : 'bg-red-50'}`;
-      const ava = document.createElement('div'); ava.className='avatar'; ava.textContent = p.avatar || '🙂';
-      const txt = document.createElement('div');
-      txt.innerHTML = `<div class="text-sm font-semibold">${p.name}</div><div class="text-xs text-gray-500">${(p.hand||[]).length}장</div>`;
-      if (!p.connected) txt.innerHTML += '<div class="text-xs text-red-500"> (퇴장)</div>';
-      if (pid === localPlayerId) txt.innerHTML += '<div class="text-xs text-amber-500"> (You)</div>';
-      div.appendChild(ava); div.appendChild(txt); playersList.appendChild(div);
-
-      const seat = document.createElement('div');
-      seat.innerHTML = `<div class="avatar inline-block mb-1 ${!p.connected ? 'opacity-50' : ''}">${p.avatar||'🙂'}</div><div class="text-sm font-semibold ${!p.connected ? 'text-gray-400 line-through' : ''}">${p.name}</div>`;
-      playerAreas.appendChild(seat);
-    });
-    renderMyHand(playersObj[localPlayerId]?.hand || []);
-  };
-
-  // ===== 내 카드 렌더 =====
-  const renderMyHand = (hand) => {
-    console.log('디버그: renderMyHand 호출 - 카드 수:', hand.length);
-    myHandDiv.innerHTML = '';
-    hand.sort((a,b)=>a-b).forEach((card, idx) => {
-      const d = document.createElement('div');
-      d.className = 'card bg-white';
-      d.textContent = card === 0 ? '광대' : card;
-      d.onclick = () => {
-        console.log('디버그: 카드 클릭 - idx:', idx, '현재 선택:', mySelectedIndices);
-        if (!isMyTurn()) { alert('내 턴이 아닙니다!'); return; }
-        if (mySelectedIndices.includes(idx)) {
-          mySelectedIndices = mySelectedIndices.filter(i=>i!==idx);
-          d.classList.remove('selected');
-        } else {
-          mySelectedIndices.push(idx);
-          d.classList.add('selected');
-        }
-      };
-      myHandDiv.appendChild(d);
-    });
-  };
-
-  // ===== 테이블 렌더 =====
-  const renderTable = (tbl) => {
-    console.log('디버그: renderTable 호출 - 테이블 아이템:', Object.keys(tbl).length);
-    tableArea.innerHTML = '';
-    const entries = Object.entries(tbl);
-    if (entries.length === 0) {
-      tableArea.innerHTML = '<div class="text-sm text-gray-500">아직 제출된 카드 없음</div>';
-      return;
-    }
-    entries.forEach(([pid, cards]) => {
-      const node = document.createElement('div');
-      node.className = 'mb-2 text-sm text-gray-500';
-      node.textContent = `${pid}: ${cards.map(c=>c===0?'광대':c).join(', ')}`;
-      tableArea.appendChild(node);
-    });
-  };
-
-  // ===== 패스 =====
-  passBtn.onclick = async () => {
-    console.log('디버그: 패스 버튼 클릭');
-    if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
-    if (!isMyTurn()) return alert('내 턴이 아닙니다!');
-    try {
-      await push(ref(db, `rooms/${currentRoomId}/actions`), {type: 'pass', playerId: localPlayerId, ts: Date.now()});
-      console.log('디버그: 패스 action push 성공');
-      mySelectedIndices = [];
-    } catch (e) {
-      console.error('디버그: 패스 에러:', e);
-    }
-  };
-
-  // ===== 제출 =====
-  submitBtn.onclick = async () => {
-    console.log('디버그: 제출 버튼 클릭 - 선택된 인덱스:', mySelectedIndices);
-    if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
-    if (!isMyTurn()) return alert('내 턴이 아닙니다!');
-    if (mySelectedIndices.length === 0) return alert('카드 선택');
-    try {
-      await push(ref(db, `rooms/${currentRoomId}/actions`), {
-        type: 'play',
-        playerId: localPlayerId,
-        selectedIndices: mySelectedIndices,
-        ts: Date.now()
-      });
-      console.log('디버그: 제출 action push 성공');
-      mySelectedIndices = [];
-    } catch (e) {
-      console.error('디버그: 제출 에러:', e);
-    }
-  };
-
-  // ===== 호스트 액션 처리 =====
-  const startHostActionListener = (roomId) => {
+  // ===== 호스트 액션 리스너 (전역 등록) =====
+  window.startHostActionListener = function(roomId) {
+    console.log('호스트 액션 리스너 시작됨 - roomId:', roomId);
     const actionsRef = ref(db, `rooms/${roomId}/actions`);
     onValue(actionsRef, async (snap) => {
-      if (!isHost || !snap.exists()) return;
+      if (!snap.exists()) return;
       const actions = snap.val();
       const keys = Object.keys(actions).sort();
-      console.log('디버그: 호스트 액션 처리 - 액션 수:', keys.length);
       for (const k of keys) {
         const a = actions[k];
         const roomSnap = await get(ref(db, `rooms/${roomId}`));
@@ -383,50 +140,32 @@ createBtn.onclick = async () => {
         const players = Object.keys(room.players || {});
         if (players.length === 0) continue;
         const expectedPid = players[room.turnIndex % players.length];
-        if (a.playerId !== expectedPid) {
-          console.log('디버그: 액션 무시 - 턴 불일치');
-          await remove(child(actionsRef, k));
-          continue;
-        }
+        if (a.playerId !== expectedPid) { await remove(child(actionsRef, k)); continue; }
 
         if (a.type === 'pass') {
-          console.log('디버그: 패스 처리');
           await update(ref(db, `rooms/${roomId}`), { turnIndex: (room.turnIndex + 1) % players.length });
           await remove(child(actionsRef, k));
           continue;
         }
 
         if (a.type === 'play') {
-          console.log('디버그: 제출 처리 - 선택 인덱스:', a.selectedIndices);
           const handSnap = await get(ref(db, `rooms/${roomId}/players/${a.playerId}/hand`));
           const hand = handSnap.val() || [];
           const sel = a.selectedIndices.slice().sort((x,y)=>y-x);
           const played = sel.map(i=>hand[i]);
-          console.log('디버그: 제출된 카드:', played);
-
           const nonWild = played.filter(c=>c!==0);
           const number = nonWild.length > 0 ? nonWild[0] : 13;
+
           if (nonWild.length > 0 && !nonWild.every(c=>c===number)) {
-            console.log('디버그: 검증 실패 - 같은 숫자 아님');
-            await remove(child(actionsRef, k));
-            continue;
+            await remove(child(actionsRef, k)); continue;
           }
 
           const rc = room.roundCount;
           const rn = room.roundNumber;
-          if (rc !== null && played.length !== rc) {
-            console.log('디버그: 검증 실패 - 장수 불일치');
-            await remove(child(actionsRef, k));
-            continue;
-          }
-          if (rn !== null && number >= rn) {
-            console.log('디버그: 검증 실패 - 숫자 높음');
-            await remove(child(actionsRef, k));
-            continue;
-          }
+          if (rc !== null && played.length !== rc) { await remove(child(actionsRef, k)); continue; }
+          if (rn !== null && number >= rn) { await remove(child(actionsRef, k)); continue; }
 
-          const newHand = hand.slice();
-          sel.forEach(i=>newHand.splice(i,1));
+          const newHand = hand.slice(); sel.forEach(i=>newHand.splice(i,1));
           const updates = {};
           updates[`rooms/${roomId}/players/${a.playerId}/hand`] = newHand;
           updates[`rooms/${roomId}/table/${a.playerId}`] = played;
@@ -434,7 +173,6 @@ createBtn.onclick = async () => {
           updates[`rooms/${roomId}/roundNumber`] = number;
           updates[`rooms/${roomId}/turnIndex`] = (room.turnIndex + 1) % players.length;
           await update(ref(db), updates);
-          console.log('디버그: 제출 적용 성공');
           await remove(child(actionsRef, k));
         } else {
           await remove(child(actionsRef, k));
