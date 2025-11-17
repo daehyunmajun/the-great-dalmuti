@@ -345,21 +345,38 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   submitBtn.onclick = async () => {
-    if (!currentRoomId || !localPlayerId) return alert('방 참가 후');
-    if (!isMyTurn()) return alert('내 턴이 아닙니다!');
-    if (mySelectedIndices.length === 0) return alert('카드 선택');
+    console.log('제출 버튼 클릭됨');
+    console.log('선택된 인덱스:', mySelectedIndices);
+    console.log('현재 손패:', roomData?.players?.[localPlayerId]?.hand);
+    
+    if (!currentRoomId || !localPlayerId) {
+      console.log('방 정보 없음');
+      return alert('방 참가 후');
+    }
+    if (!isMyTurn()) {
+      console.log('내 턴 아님');
+      return alert('내 턴이 아닙니다!');
+    }
+    if (mySelectedIndices.length === 0) {
+      console.log('카드 선택 안됨');
+      return alert('카드 선택');
+    }
     
     try {
-      await push(ref(db, `rooms/${currentRoomId}/actions`), {
+      console.log('Firebase에 액션 전송 시작...');
+      const actionRef = await push(ref(db, `rooms/${currentRoomId}/actions`), {
         type: 'play',
         playerId: localPlayerId,
         selectedIndices: [...mySelectedIndices],
         ts: Date.now()
       });
+      console.log('액션 전송 성공:', actionRef.key);
       
       // 제출 후 선택 초기화
       mySelectedIndices = [];
+      console.log('선택 초기화 완료');
     } catch (e) {
+      console.error('제출 에러:', e);
       alert('제출 실패: ' + e.message);
     }
   };
@@ -411,32 +428,45 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (a.type === 'play') {
+          console.log('=== 카드 제출 처리 시작 ===');
+          console.log('제출 플레이어:', a.playerId);
+          console.log('선택된 인덱스:', a.selectedIndices);
+          
           const handSnap = await get(ref(db, `rooms/${roomId}/players/${a.playerId}/hand`));
           const hand = handSnap.val() || [];
+          console.log('현재 손패:', hand);
+          
           const sel = a.selectedIndices.slice().sort((x,y)=>y-x);
           const played = sel.map(i=>hand[i]);
+          console.log('제출할 카드:', played);
+          
           const nonWild = played.filter(c=>c!==0);
           const number = nonWild.length > 0 ? nonWild[0] : 13;
+          console.log('카드 숫자:', number, '와일드 제외:', nonWild);
         
           // 같은 숫자 체크
           if (nonWild.length > 0 && !nonWild.every(c=>c===number)) {
-            console.log('검증 실패: 같은 숫자 아님');
+            console.log('❌ 검증 실패: 같은 숫자 아님');
             await remove(child(actionsRef, k)); 
             continue;
           }
         
           const rn = room.roundNumber;
+          console.log('현재 라운드 숫자:', rn);
         
           // 숫자만 체크 (자유 모드면 체크 안함)
           if (rn !== null && number >= rn) {
-            console.log('검증 실패: 숫자 높음');
+            console.log('❌ 검증 실패: 숫자 높음 (제출:', number, '/ 필요:', rn, '미만)');
             await remove(child(actionsRef, k)); 
             continue;
           }
         
           // 성공 처리
+          console.log('✅ 검증 통과! 카드 제출 처리 중...');
           const newHand = hand.slice(); 
           sel.forEach(i=>newHand.splice(i,1));
+          console.log('새 손패:', newHand);
+          
           const updates = {};
           updates[`rooms/${roomId}/players/${a.playerId}/hand`] = newHand;
           updates[`rooms/${roomId}/table/${a.playerId}`] = played;
@@ -444,9 +474,11 @@ document.addEventListener('DOMContentLoaded', () => {
           updates[`rooms/${roomId}/roundNumber`] = number;
           updates[`rooms/${roomId}/turnIndex`] = (room.turnIndex + 1) % players.length;
           updates[`rooms/${roomId}/lastPlayerId`] = a.playerId;
+          
           await update(ref(db), updates);
-          console.log('제출 성공! 테이블 업데이트');
+          console.log('✅ 제출 성공! 테이블 업데이트 완료');
           await remove(child(actionsRef, k));
+          console.log('=== 카드 제출 처리 완료 ===');
         }
       }
     });
