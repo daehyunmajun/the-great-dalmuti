@@ -382,15 +382,27 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const startHostActionListener = (roomId) => {
-    if (hostListenerActive) return;
+    if (hostListenerActive) {
+      console.log('⚠️ 호스트 리스너 이미 실행 중');
+      return;
+    }
     hostListenerActive = true;
-    console.log('호스트 액션 리스너 시작됨 - roomId:', roomId);
+    console.log('🎮 호스트 액션 리스너 시작됨 - roomId:', roomId);
+    
     const actionsRef = ref(db, `rooms/${roomId}/actions`);
     onValue(actionsRef, async (snap) => {
-      if (!snap.exists()) return;
+      console.log('📥 액션 감지됨');
+      if (!snap.exists()) {
+        console.log('액션 없음');
+        return;
+      }
       const actions = snap.val();
+      console.log('현재 액션들:', actions);
       const keys = Object.keys(actions).sort();
+      console.log('처리할 액션 키:', keys);
+      
       for (const k of keys) {
+        console.log('--- 액션 처리 시작:', k);
         const a = actions[k];
         const roomSnap = await get(ref(db, `rooms/${roomId}`));
         if (!roomSnap.exists()) continue;
@@ -398,7 +410,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const players = Object.keys(room.players || {});
         if (players.length === 0) continue;
         const expectedPid = players[room.turnIndex % players.length];
+        console.log('예상 플레이어:', expectedPid, '/ 실제 플레이어:', a.playerId);
+        
         if (a.playerId !== expectedPid) { 
+          console.log('❌ 턴 아님, 액션 삭제');
           await remove(child(actionsRef, k)); 
           continue; 
         }
@@ -485,10 +500,16 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const attachHostWatcher = (roomId) => {
+    console.log('호스트 감시 시작 - localPlayerId:', localPlayerId);
     const hostRef = ref(db, `rooms/${roomId}/host`);
     onValue(hostRef, (snap) => {
-      const newIsHost = snap.val() === localPlayerId;
-      if (newIsHost && !isHost) {
+      const hostId = snap.val();
+      console.log('현재 호스트 ID:', hostId, '/ 내 ID:', localPlayerId);
+      const newIsHost = hostId === localPlayerId;
+      console.log('내가 호스트인가?', newIsHost);
+      
+      if (newIsHost && !hostListenerActive) {
+        console.log('✅ 호스트로 확인됨! 액션 리스너 시작');
         isHost = true;
         startHostActionListener(roomId);
       }
