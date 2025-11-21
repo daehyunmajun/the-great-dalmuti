@@ -382,27 +382,15 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const startHostActionListener = (roomId) => {
-    if (hostListenerActive) {
-      console.log('⚠️ 호스트 리스너 이미 실행 중');
-      return;
-    }
+    if (hostListenerActive) return;
     hostListenerActive = true;
-    console.log('🎮 호스트 액션 리스너 시작됨 - roomId:', roomId);
-    
+    console.log('호스트 액션 리스너 시작됨 - roomId:', roomId);
     const actionsRef = ref(db, `rooms/${roomId}/actions`);
     onValue(actionsRef, async (snap) => {
-      console.log('📥 액션 감지됨');
-      if (!snap.exists()) {
-        console.log('액션 없음');
-        return;
-      }
+      if (!snap.exists()) return;
       const actions = snap.val();
-      console.log('현재 액션들:', actions);
       const keys = Object.keys(actions).sort();
-      console.log('처리할 액션 키:', keys);
-      
       for (const k of keys) {
-        console.log('--- 액션 처리 시작:', k);
         const a = actions[k];
         const roomSnap = await get(ref(db, `rooms/${roomId}`));
         if (!roomSnap.exists()) continue;
@@ -410,10 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const players = Object.keys(room.players || {});
         if (players.length === 0) continue;
         const expectedPid = players[room.turnIndex % players.length];
-        console.log('예상 플레이어:', expectedPid, '/ 실제 플레이어:', a.playerId);
-        
         if (a.playerId !== expectedPid) { 
-          console.log('❌ 턴 아님, 액션 삭제');
           await remove(child(actionsRef, k)); 
           continue; 
         }
@@ -467,17 +452,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         
           const rn = room.roundNumber;
-          const rc = room.roundCount;
-          console.log('현재 라운드 숫자:', rn, '/ 현재 라운드 장수:', rc);
+          console.log('현재 라운드 숫자:', rn);
         
-          // 장수 체크 (자유 모드가 아니면 장수 일치 필수)
-          if (rc !== null && played.length !== rc) {
-            console.log('❌ 검증 실패: 장수 불일치 (제출:', played.length, '장 / 필요:', rc, '장)');
-            await remove(child(actionsRef, k)); 
-            continue;
-          }
-        
-          // 숫자 체크 (자유 모드가 아니면 숫자는 더 낮아야 함)
+          // 숫자만 체크 (자유 모드면 체크 안함)
           if (rn !== null && number >= rn) {
             console.log('❌ 검증 실패: 숫자 높음 (제출:', number, '/ 필요:', rn, '미만)');
             await remove(child(actionsRef, k)); 
