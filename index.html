@@ -471,8 +471,12 @@ document.addEventListener('DOMContentLoaded', () => {
           console.log('현재 라운드 숫자:', rn, '/ 현재 라운드 장수:', rc);
           console.log('제출 카드 숫자:', number, '/ 제출 장수:', played.length);
         
+          // 자유 모드 체크 (null 또는 undefined일 때)
+          const isFreeMode = (rc == null || rn == null);
+          console.log('자유 모드?', isFreeMode);
+        
           // 자유 모드가 아닐 때만 체크
-          if (rc !== null && rn !== null) {
+          if (!isFreeMode) {
             // 장수 체크
             if (played.length !== rc) {
               console.log('❌ 검증 실패: 장수 불일치 (제출:', played.length, '장 / 필요:', rc, '장)');
