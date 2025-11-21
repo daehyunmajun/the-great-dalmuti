@@ -467,9 +467,17 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         
           const rn = room.roundNumber;
-          console.log('현재 라운드 숫자:', rn);
+          const rc = room.roundCount;
+          console.log('현재 라운드 숫자:', rn, '/ 현재 라운드 장수:', rc);
         
-          // 숫자만 체크 (자유 모드면 체크 안함)
+          // 장수 체크 (자유 모드가 아니면 장수 일치 필수)
+          if (rc !== null && played.length !== rc) {
+            console.log('❌ 검증 실패: 장수 불일치 (제출:', played.length, '장 / 필요:', rc, '장)');
+            await remove(child(actionsRef, k)); 
+            continue;
+          }
+        
+          // 숫자 체크 (자유 모드가 아니면 숫자는 더 낮아야 함)
           if (rn !== null && number >= rn) {
             console.log('❌ 검증 실패: 숫자 높음 (제출:', number, '/ 필요:', rn, '미만)');
             await remove(child(actionsRef, k)); 
